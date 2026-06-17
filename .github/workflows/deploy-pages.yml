@@ -1,0 +1,39 @@
+name: Deploy viewer to Cloudflare Pages
+
+# Le viewer (app/) est hébergé sur Cloudflare Pages ; les Pages Functions (app/functions/)
+# proxient /mcp, /api/*, /.well-known/* vers les Edge Functions Supabase.
+# Déploie l'instance hébergée d'Otomata (mento.cc) ; gardé par repository_owner pour
+# qu'un fork ne déploie pas notre prod (configure tes propres secrets/projet pour la tienne).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: github.repository_owner == 'otomata-tech'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - name: Build
+        working-directory: app
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          npm ci
+          npm run build
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: pages deploy dist --project-name=memento-viewer --branch=main

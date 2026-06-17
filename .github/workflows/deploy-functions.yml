@@ -1,0 +1,57 @@
+name: Deploy edge functions
+
+# Déploie les Edge Functions Supabase (mcp + api) sur push main.
+# On migre la DB AVANT de déployer (sinon une function qui lit une colonne pas encore
+# migrée casse). Steps séquentiels fail-fast.
+# Déploie l'instance hébergée d'Otomata ; gardé par repository_owner (un fork ne déploie
+# pas notre prod — configure tes secrets/variable et ton projet Supabase pour la tienne).
+#
+# Secrets requis : SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL (session pooler, IPv4).
+# Variable requise : SUPABASE_PROJECT_REF.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/functions/**"
+      - "server/src/schema.ts"
+      - "server/drizzle/**"
+      - ".github/workflows/deploy-functions.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-functions
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository_owner == 'otomata-tech'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # 1. Migrations DB (prod) — AVANT le deploy.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - name: Migrate prod DB
+        working-directory: server
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          npm ci
+          npm run db:migrate
+
+      # 2. Deploy functions (échec de la migration ⇒ on n'arrive jamais ici).
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+      - name: Deploy functions (mcp + api)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          rm -f supabase/functions/deno.lock
+          supabase functions deploy mcp --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
