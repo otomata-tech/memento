@@ -6,12 +6,14 @@
 // Le Host doit valoir l'hôte Supabase (sinon le gateway ne route pas la function) ;
 // on retire le Host entrant et fetch() le redérive de l'URL cible. Le corps et la
 // réponse sont streamés tels quels — équivaut au flush_interval -1 de Caddy (SSE).
+//
+// `supabase` = URL du projet Supabase (https://<ref>.supabase.co), fournie par
+// l'env du projet Pages (`ctx.env.SUPABASE_URL`) — jamais codée en dur (fork-friendly).
 
-const SUPABASE = "https://YOUR_PROJECT.supabase.co"; // ← URL de ton projet Supabase
-
-export function proxyTo(targetPath: string, request: Request, keepSearch: boolean): Promise<Response> {
+export function proxyTo(supabase: string, targetPath: string, request: Request, keepSearch: boolean): Promise<Response> {
+  if (!supabase) throw new Error("SUPABASE_URL absente de l'env du projet Pages");
   const url = new URL(request.url);
-  const target = SUPABASE + targetPath + (keepSearch ? url.search : "");
+  const target = supabase + targetPath + (keepSearch ? url.search : "");
 
   const headers = new Headers(request.headers);
   headers.delete("host"); // redérivé de target par le runtime
