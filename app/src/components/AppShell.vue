@@ -206,6 +206,7 @@ defineExpose({ reloadShell: loadShell });
               <div class="eb">Compte</div>
               <div class="acct-mail">{{ email || "—" }}</div>
             </div>
+            <router-link class="acct-item" to="/plugin" @click="menuOpen = false">⚡ Connecter un client MCP</router-link>
             <button class="acct-item danger" @click="logout">⏏ Se déconnecter</button>
           </div>
         </div>

@@ -111,7 +111,7 @@ const STEPS = [
         <h2>Les bases sont privées, l'accès sur invitation.</h2>
         <div class="actions">
           <router-link to="/login" class="btn-solar">Se connecter</router-link>
-          <a href="mailto:hello@example.com" class="btn-ghost">Demander un accès</a>
+          <a href="mailto:hello@mento.cc" class="btn-ghost">Demander un accès</a>
         </div>
       </div>
     </section>

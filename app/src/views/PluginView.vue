@@ -53,6 +53,28 @@ const INSTALL = `{
     </header>
 
     <main>
+      <!-- Connecter (client-agnostic) — cible du menu « Connecter (MCP) » de l'app -->
+      <section class="sect" id="connecter">
+        <p class="eyebrow">Connecter</p>
+        <h2>Brancher un client MCP</h2>
+        <p class="lede">
+          Memento est un <b>serveur MCP distant</b>, authentifié par OAuth. Branchez n'importe quel
+          client compatible sur l'endpoint — votre compte (et son périmètre de partage) suit la connexion,
+          rien à installer en local.
+        </p>
+        <pre class="code">https://mcp.mento.cc/mcp</pre>
+        <ul class="clients">
+          <li>
+            <b>claude.ai · ChatGPT · Mistral Le Chat</b> — Réglages → Connecteurs → « Ajouter un
+            connecteur personnalisé » → coller l'URL ci-dessus → s'authentifier (OAuth au 1er usage).
+          </li>
+          <li>
+            <b>Claude Code (CLI)</b> — <code>claude mcp add memento https://mcp.mento.cc/mcp --transport http</code>,
+            OAuth au premier appel. Ou installez le <b>plugin</b> (ci-dessous) : il câble le connecteur et les skills.
+          </li>
+        </ul>
+      </section>
+
       <section class="hero">
         <p class="eyebrow">Plugin Claude Code</p>
         <h1>La mémoire de session,<br />jusqu'à la base partagée.</h1>
@@ -110,7 +132,7 @@ const INSTALL = `{
         <ol class="steps">
           <li>
             <b>Accès.</b> Les bases sont privées (orgs/rôles) : il faut avoir été invité —
-            <a href="mailto:hello@example.com">demander un accès</a>.
+            <a href="mailto:hello@mento.cc">demander un accès</a>.
           </li>
           <li>
             <b>Déclarer le plugin</b> dans <code>~/.claude/settings.json</code> :
@@ -156,6 +178,13 @@ main { flex: 1; width: 100%; max-width: 880px; margin: 0 auto; padding: 0 24px; 
 .lede { max-width: 640px; font-size: 16px; line-height: 1.65; color: var(--color-ink-soft); margin: 0; }
 .lede b { color: var(--color-ink); }
 .lede code, .note code, .steps code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-paper-2); padding: 1px 5px; }
+
+#connecter { padding-top: 44px; }
+#connecter h2 { font-family: var(--font-display); font-weight: 650; font-size: 26px; letter-spacing: -0.015em; margin: 12px 0 14px; }
+.clients { margin: 16px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 10px; }
+.clients li { font-size: 14.5px; line-height: 1.6; color: var(--color-ink-soft); }
+.clients b { color: var(--color-ink); }
+.clients code { font-family: var(--font-mono); font-size: 0.88em; background: var(--color-paper-2); padding: 1px 5px; }
 
 .sect { border-top: 1px solid var(--color-hair); padding: 36px 0 44px; }
 
