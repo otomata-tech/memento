@@ -5,8 +5,9 @@
  *
  * Un grant donne LECTURE (member) ou ÉCRITURE (curator) — jamais la gouvernance
  * (décision 2026-06-12) : partager/visibilité/transfert restent aux admins de
- * l'org propriétaire (assertWorkspaceAdmin). Invitation guest : même flux GoTrue
- * que les membres d'org, seul l'atterrissage change (grant au lieu de membership).
+ * l'org propriétaire (assertWorkspaceAdmin). Invitation guest : même flux
+ * d'invitation que les membres d'org (provision GoTrue + email Resend), seul
+ * l'atterrissage change (grant au lieu de membership).
  */
 import { and, eq } from "drizzle-orm";
 import { db, workspaces, workspaceGrants, orgs, memberships } from "./db.ts";
@@ -74,7 +75,9 @@ export async function grantAccess(
   await assertWithinLimit(sub, "invite"); // un grant peut provisionner + envoyer un email
   const w = await wsBySlug(args.workspace);
   const role = ROLES.includes(args.role ?? "") ? args.role! : "member";
-  const account = await ensureAccount(args.email.trim());
+  const account = await ensureAccount(args.email.trim(), {
+    scope: "workspace", targetName: w.name, role, inviterSub: sub,
+  });
 
   await db.insert(workspaceGrants)
     .values({ workspaceId: w.id, userId: account.sub, role, createdBy: sub })

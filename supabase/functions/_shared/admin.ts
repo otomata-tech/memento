@@ -10,6 +10,8 @@ import { db, orgs, memberships, workspaces, workspaceGrants } from "./db.ts";
 import { AccessError, accessibleWorkspaceIds } from "./access.ts";
 import { slugify } from "./write.ts";
 import { assertWithinLimit } from "./ratelimit.ts";
+import { emailConfigured, sendEmail } from "./email/resend.ts";
+import { invitationEmail } from "./email/templates.ts";
 
 const ROLES = ["admin", "curator", "member"];
 
@@ -172,25 +174,10 @@ function gotrueEnv() {
   return { url, headers, redirectTo };
 }
 
-/** Provisionne le compte ET envoie l'email d'invitation (GoTrue /invite + SMTP custom). */
-async function sendInviteEmail(email: string): Promise<{ sub: string }> {
-  const { url, headers, redirectTo } = gotrueEnv();
-  const res = await fetch(`${url}/auth/v1/invite?redirect_to=${encodeURIComponent(redirectTo)}`, {
-    method: "POST", headers, body: JSON.stringify({ email }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    console.error("[invite] GoTrue /invite échec:", res.status, data);
-    throw new Error("envoi de l'invitation échoué");
-  }
-  const sub = data.id ?? data.user?.id;
-  if (!sub) throw new Error("réponse invite inattendue");
-  return { sub };
-}
-
 /**
- * Repli sans email : provisionne le compte + renvoie un lien cliquable à transmettre
- * (GoTrue generate_link). Pour un compte déjà existant, `type=magiclink` ; sinon `invite`.
+ * Provisionne le compte (si besoin) ET renvoie le lien d'action GoTrue SANS envoyer
+ * d'email — Memento envoie lui-même via Resend (cf. deliverInvite). Pour un compte
+ * déjà existant, `type=magiclink` ; sinon `invite`.
  */
 async function generateInviteLink(email: string, existing = false): Promise<{ sub: string; link: string }> {
   const { url, headers, redirectTo } = gotrueEnv();
@@ -209,10 +196,48 @@ async function generateInviteLink(email: string, existing = false): Promise<{ su
   return { sub, link };
 }
 
+/** Métadonnées d'invitation pour enrichir l'email (org/KB ciblée, rôle, invitant). */
+export interface InviteMeta {
+  scope: "org" | "workspace";
+  targetName: string;
+  role?: string;
+  inviterSub?: string;
+}
+
+/**
+ * Envoie l'email d'invitation via Resend pour un lien d'action déjà généré. Si le
+ * provider n'est pas configuré ou échoue, retombe sur le lien à transmettre à la
+ * main (l'admin le copie depuis l'UI) — pas de perte de fonctionnalité.
+ */
+async function deliverInvite(
+  email: string,
+  link: string,
+  meta?: InviteMeta,
+): Promise<{ emailSent: boolean; inviteLink: string | null }> {
+  if (!emailConfigured()) return { emailSent: false, inviteLink: link };
+  let inviterEmail: string | null = null;
+  if (meta?.inviterSub) {
+    inviterEmail = (await emailsFor([meta.inviterSub])).get(meta.inviterSub)?.email ?? null;
+  }
+  try {
+    const msg = invitationEmail({
+      link,
+      scope: meta?.scope ?? "org",
+      targetName: meta?.targetName ?? "Memento",
+      role: meta?.role,
+      inviterEmail,
+    });
+    await sendEmail({ ...msg, to: email });
+    return { emailSent: true, inviteLink: null };
+  } catch (_e) {
+    return { emailSent: false, inviteLink: link };
+  }
+}
+
 /**
  * Invite un membre. Compte existant → ajout/màj du rôle (pas d'email). Nouveau compte →
- * provisionné + email d'invitation envoyé par GoTrue (SMTP custom) ; si l'envoi échoue,
- * repli sur un lien à transmettre à la main. Admin de l'org requis.
+ * provisionné + email d'invitation envoyé par Memento via Resend ; si le provider est
+ * absent ou échoue, repli sur un lien à transmettre à la main. Admin de l'org requis.
  */
 export async function inviteMember(sub: string, args: { orgSlug: string; email: string; role: string }) {
   const org = await orgBySlug(args.orgSlug);
@@ -221,7 +246,7 @@ export async function inviteMember(sub: string, args: { orgSlug: string; email: 
   const role = ROLES.includes(args.role) ? args.role : "member";
   const email = args.email.trim();
 
-  const account = await ensureAccount(email);
+  const account = await ensureAccount(email, { scope: "org", targetName: org.name, role, inviterSub: sub });
   await db.insert(memberships).values({ orgId: org.id, userId: account.sub, role })
     .onConflictDoUpdate({ target: [memberships.orgId, memberships.userId], set: { role } });
 
@@ -232,28 +257,27 @@ export async function inviteMember(sub: string, args: { orgSlug: string; email: 
 }
 
 /**
- * Compte pour cet email — existant tel quel, sinon provisionné + email
- * d'invitation (repli : lien à transmettre). Brique partagée orgs / grants :
- * UN flux d'invitation, deux atterrissages (membership ou grant).
+ * Compte pour cet email — existant tel quel, sinon provisionné (GoTrue, sans email)
+ * + email d'invitation envoyé par Memento via Resend (repli : lien à transmettre).
+ * Brique partagée orgs / grants : UN flux d'invitation, deux atterrissages
+ * (membership ou grant). `meta` enrichit l'email (org/KB, rôle, invitant).
  */
 export async function ensureAccount(
   email: string,
+  meta?: InviteMeta,
 ): Promise<{ sub: string; provisioned: boolean; emailSent: boolean; inviteLink: string | null }> {
   let existing: string | null = null;
   try { existing = await subForEmail(email); } catch { existing = null; }
   if (existing) return { sub: existing, provisioned: false, emailSent: false, inviteLink: null };
-  try {
-    const r = await sendInviteEmail(email);
-    return { sub: r.sub, provisioned: true, emailSent: true, inviteLink: null };
-  } catch (_e) {
-    const r = await generateInviteLink(email);
-    return { sub: r.sub, provisioned: true, emailSent: false, inviteLink: r.link };
-  }
+  const { sub, link } = await generateInviteLink(email);
+  const { emailSent, inviteLink } = await deliverInvite(email, link, meta);
+  return { sub, provisioned: true, emailSent, inviteLink };
 }
 
 /**
- * Renvoie une invitation à un membre encore jamais connecté (pending) : email de
- * connexion magic link via GoTrue (/magiclink, SMTP custom). Admin de l'org requis.
+ * Renvoie une invitation à un membre encore jamais connecté (pending) : magic link
+ * généré par GoTrue (sans email) puis envoyé par Memento via Resend. Repli sur lien
+ * à transmettre si le provider est absent/échoue. Admin de l'org requis.
  */
 export async function resendInvite(sub: string, args: { orgSlug: string; email: string }) {
   const org = await orgBySlug(args.orgSlug);
@@ -261,16 +285,11 @@ export async function resendInvite(sub: string, args: { orgSlug: string; email: 
   await assertWithinLimit(sub, "invite");
   const email = args.email.trim();
   await subForEmail(email); // doit exister (provisionné)
-  const { url, headers, redirectTo } = gotrueEnv();
-  const res = await fetch(`${url}/auth/v1/magiclink?redirect_to=${encodeURIComponent(redirectTo)}`, {
-    method: "POST", headers, body: JSON.stringify({ email }),
+  const { link } = await generateInviteLink(email, true); // magic link (compte existant)
+  const { emailSent, inviteLink } = await deliverInvite(email, link, {
+    scope: "org", targetName: org.name, inviterSub: sub,
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    console.error("[invite] GoTrue magiclink échec:", res.status, data);
-    throw new Error("renvoi échoué");
-  }
-  return { orgSlug: org.slug, email, emailSent: true };
+  return { orgSlug: org.slug, email, emailSent, inviteLink };
 }
 
 /** Lien de connexion à transmettre à la main (repli messagerie) pour un compte existant. */
