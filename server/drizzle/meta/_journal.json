@@ -127,6 +127,13 @@
       "when": 1781710335961,
       "tag": "0017_hard_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1781816325077,
+      "tag": "0018_bouncy_the_hunter",
+      "breakpoints": true
     }
   ]
 }

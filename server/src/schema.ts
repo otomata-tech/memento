@@ -318,6 +318,10 @@ export const ingestions = pgTable(
     decidedBy: text("decided_by"),
     createdAt: createdAt(),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    // Verrou d'apply (#40) : posé en tête d'applyIngestion par CAS atomique
+    // (claim), libéré (NULL) à la fin. Empêche un apply concurrent/rejoué de
+    // ré-exécuter le change-set → plus de duplication silencieuse.
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
   },
   (t) => [
     index("mem_ingestions_ws_status").on(t.workspaceId, t.status),

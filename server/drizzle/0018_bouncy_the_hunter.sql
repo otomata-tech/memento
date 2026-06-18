@@ -1,0 +1,1 @@
+ALTER TABLE "mem_ingestions" ADD COLUMN "claimed_at" timestamp with time zone;

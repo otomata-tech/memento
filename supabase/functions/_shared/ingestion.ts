@@ -13,7 +13,7 @@
  * L'état de chaque change (applied/error) est persisté dans le `proposal` jsonb : une ingestion
  * PARTIAL peut être ré-appliquée pour traiter les ops restantes.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, notInArray, or } from "drizzle-orm";
 import { db, ingestions, workspaces } from "./db.ts";
 import { loopUrl } from "./urls.ts";
 import { resolveWorkspaceId } from "./access.ts";
@@ -196,10 +196,27 @@ export async function applyIngestion(
   args: { id: string; acceptIds?: string[]; edits?: Array<{ id: string; payload: Record<string, unknown> }> },
   actor: string,
 ) {
-  const { row, slug } = await fetchWithSlug(args.id);
-  if (row.status === "APPLIED" || row.status === "REJECTED") {
-    throw new Error(`ingestion déjà clôturée (${row.status})`);
+  // Claim atomique (#40) : réserve l'ingestion AVANT tout travail. Un seul UPDATE
+  // gagne la course ; un apply concurrent ou rejoué (retry transport en vol)
+  // obtient 0 ligne → no-op idempotent, plus de double exécution du change-set.
+  const claimCutoff = new Date(Date.now() - 5 * 60_000); // claim plus vieux = apply crashé → ré-ouvrable
+  const [claimed] = await db.update(ingestions)
+    .set({ claimedAt: new Date() })
+    .where(and(
+      eq(ingestions.id, args.id),
+      notInArray(ingestions.status, ["APPLIED", "REJECTED"]),
+      or(isNull(ingestions.claimedAt), lt(ingestions.claimedAt, claimCutoff)),
+    ))
+    .returning({ id: ingestions.id });
+  if (!claimed) {
+    // Déjà clôturée, ou un autre apply tient le claim → no-op, on renvoie l'état courant.
+    const { row, slug } = await fetchWithSlug(args.id);
+    return {
+      id: args.id, workspace: slug, status: row.status,
+      counts: counts((row.proposal as Change[]) ?? []), results: [], noop: true,
+    };
   }
+  const { row, slug } = await fetchWithSlug(args.id);
   const changes = (row.proposal as Change[]) ?? [];
   const accept = args.acceptIds ? new Set(args.acceptIds) : null;
   const edits = new Map((args.edits ?? []).map((e) => [e.id, e.payload]));
@@ -231,7 +248,8 @@ export async function applyIngestion(
 
   const status = changes.some((c) => !c.applied) ? "PARTIAL" : "APPLIED";
   await db.update(ingestions)
-    .set({ proposal: changes, status, decidedBy: actor, decidedAt: new Date() })
+    // claimedAt: null → libère le verrou (#40) ; un re-apply légitime d'un PARTIAL pourra reprendre.
+    .set({ proposal: changes, status, decidedBy: actor, decidedAt: new Date(), claimedAt: null })
     .where(eq(ingestions.id, args.id));
   return { id: args.id, workspace: slug, status, counts: counts(changes), results };
 }
