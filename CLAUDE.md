@@ -25,7 +25,7 @@ docs/                 # principles · specs · connect-mcp · access-control
 
 ```bash
 # schema
-cd server && npm run db:generate     # generate migration from schema.ts
+cd server && npm run db:generate     # gen migration from schema.ts (needs DATABASE_URL set — even a dummy; db.ts opens a client at import, no connection made)
 npm run db:migrate                   # apply (needs DATABASE_URL)
 npm run seed                         # demo workspace
 npm run admin -- list                # admin CLI
@@ -46,6 +46,7 @@ cd supabase/functions && deno test --allow-env --allow-net --allow-read _shared/
 - One canonical schema (`server/src/schema.ts`); enum/table changes go through a Drizzle migration. Migrating the DB must precede deploying functions that read new columns.
 - The MCP surface is doctrine-first: `mem_doctrine` (map) before drilling; `mem_search` over enumeration. Writes never apply blind — `mem_stage_changes` → human review → `mem_apply_ingestion`; contradictions are never auto-applied.
 - A block carries one sourceable claim; if it needs two, split it.
+- `deno check` can't fully type-check `mcp/index.ts` locally (the MCP SDK's `.d.ts` is missing from Deno's cache) — check `_shared`/`api` locally, and rely on the deploy step's bundle type-check for `mcp`.
 
 ## Edge Function secrets
 

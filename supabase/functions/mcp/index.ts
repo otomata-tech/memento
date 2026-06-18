@@ -38,11 +38,10 @@ import { setDoctrine, updateWorkspace, archiveWorkspace } from "../_shared/works
 import { listMyOrgs, createWorkspace, createOrg, transferWorkspace } from "../_shared/admin.ts";
 import { listGrants, grantAccess, revokeGrant, setVisibility } from "../_shared/grants.ts";
 import { listAccounts } from "../_shared/platform.ts";
-import {
-  addDocument, addBlock, updateBlock, setBlockType, deleteBlock,
-  attachSource, detachSource, verifyBlock, moveBlock,
-  linkBlocks, unlinkBlocks, addComment, resolveComment, deprecateDocument,
-} from "../_shared/write.ts";
+// Surface MCP v2 (#18) : plus de verbes de mutation directs — toute écriture de
+// contenu passe par mem_stage_changes (op-codes → apply). Les handlers de write.ts
+// restent appelés par OPS à l'apply ; mcp n'en utilise plus que les commentaires.
+import { addComment, resolveComment } from "../_shared/write.ts";
 import {
   createSection, renameSection, deleteSection, reorder, moveDocuments, splitSection, mergeSections,
 } from "../_shared/restructure.ts";
@@ -516,131 +515,7 @@ function buildServer(sub: string): McpServer {
     return json({ workspace: ws, org, ...(await countItems({ ...rest, workspace: ws })) });
   }));
 
-  // ── Écriture curée (Lot 2) — réservée aux rôles admin/curator de l'org ──────
-  server.registerTool("mem_add_document", {
-    description:
-      "Crée un document dans une section. `blocks` : soit du markdown brut (auto-découpé en blocs PROSE), soit un tableau [{type, content}] typé. " +
-      "`clientKey` (recommandé) = clé d'idempotence : un retry avec la même clé ne crée PAS de doublon, il renvoie l'existant (`deduplicated: true`).",
-    inputSchema: {
-      sectionId: z.string(),
-      title: z.string(),
-      summary: z.string().optional(),
-      kind: z.string().optional(),
-      blocks: z.union([longStr, z.array(z.object({ type: z.enum(BT), content: longStr })).max(MAX_BATCH)]).optional(),
-      clientKey: z.string().optional().describe("clé d'idempotence (unique par section) — fournis-la pour des retries sûrs"),
-      reason: z.string().optional(),
-    },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.sectionId, kind: "section" }, { write: true });
-    return json(await addDocument(args, sub));
-  }));
-
-  server.registerTool("mem_add_block", {
-    description:
-      "Ajoute un bloc typé à un document (à la fin par défaut, ou à `position`). " +
-      "`clientKey` (recommandé) = clé d'idempotence : un retry avec la même clé renvoie le bloc existant (`deduplicated: true`) au lieu d'en créer un jumeau. " +
-      "Si des blocs quasi identiques existent déjà, la réponse les signale (`similarExisting`) — juge alors s'il faut plutôt vérifier/enrichir l'existant.",
-    inputSchema: {
-      documentId: z.string(), type: z.enum(BT), content: longStr,
-      position: z.number().int().optional(),
-      clientKey: z.string().optional().describe("clé d'idempotence (unique par document) — fournis-la pour des retries sûrs"),
-      reason: z.string().optional(),
-    },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.documentId, kind: "document" }, { write: true });
-    return json(await addBlock(args, sub));
-  }));
-
-  server.registerTool("mem_update_block", {
-    description: "Modifie le contenu et/ou le type d'un bloc. `reason` obligatoire (journalisé en révision).",
-    inputSchema: { id: z.string(), content: longStr.optional(), type: z.enum(BT).optional(), reason: z.string() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "block" }, { write: true });
-    return json(await updateBlock(args, sub));
-  }));
-
-  server.registerTool("mem_set_block_type", {
-    description: "Change le type d'un bloc. `reason` obligatoire.",
-    inputSchema: { id: z.string(), type: z.enum(BT), reason: z.string() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "block" }, { write: true });
-    return json(await setBlockType(args, sub));
-  }));
-
-  server.registerTool("mem_delete_block", {
-    description: "Supprime un bloc. `reason` obligatoire (snapshot conservé en révision).",
-    inputSchema: { id: z.string(), reason: z.string() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "block" }, { write: true });
-    return json(await deleteBlock(args, sub));
-  }));
-
-  server.registerTool("mem_attach_source", {
-    description:
-      "Attache une source à un bloc. Réutilise une source existante (`sourceId`) OU en crée une (`kind` FILE|URL|MANUAL + `title`, option `ref`/`citation`). `locator` = localisation dans la source (page, §).",
-    inputSchema: {
-      blockId: z.string(),
-      sourceId: z.string().optional(),
-      kind: z.enum(SK).optional(), title: z.string().optional(),
-      ref: z.string().optional(), citation: z.string().optional(),
-      locator: z.string().optional(), reason: z.string().optional(),
-    },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.blockId, kind: "block" }, { write: true });
-    return json(await attachSource(args, sub));
-  }));
-
-  server.registerTool("mem_detach_source", {
-    description: "Détache une source d'un bloc (le lien, pas la source elle-même).",
-    inputSchema: { blockId: z.string(), sourceId: z.string(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.blockId, kind: "block" }, { write: true });
-    return json(await detachSource(args, sub));
-  }));
-
-  server.registerTool("mem_verify_block", {
-    description:
-      "Marque un bloc comme vérifié (horodatage + acteur). `verified:false` pour retirer la vérification.",
-    inputSchema: { id: z.string(), verified: z.boolean().optional(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "block" }, { write: true });
-    return json(await verifyBlock(args, sub));
-  }));
-
-  server.registerTool("mem_move_block", {
-    description:
-      "Déplace/réordonne un bloc : `position` dans son document, ou `toDocumentId` (même workspace) pour le rattacher ailleurs. Sans `position`, à la fin.",
-    inputSchema: {
-      id: z.string(), toDocumentId: z.string().optional(),
-      position: z.number().int().optional(), reason: z.string(),
-    },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "block" }, { write: true });
-    if (args.toDocumentId) await assertAccess(sub, { id: args.toDocumentId, kind: "document" }, { write: true });
-    return json(await moveBlock(args, sub));
-  }));
-
-  // ── Liens transverses & commentaires (Lot 3) ────────────────────────────────
-  server.registerTool("mem_link_blocks", {
-    description:
-      "Crée un lien typé entre deux blocs du même workspace. relation ∈ REFERENCES|DEPENDS_ON|CONTRADICTS|SUPERSEDES|RELATED.",
-    inputSchema: {
-      fromId: z.string(), toId: z.string(), relation: z.enum(LR),
-      note: z.string().optional(), reason: z.string().optional(),
-    },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.fromId, kind: "block" }, { write: true });
-    return json(await linkBlocks(args, sub));
-  }));
-
-  server.registerTool("mem_unlink", {
-    description: "Supprime un lien transverse par son `linkId`.",
-    inputSchema: { linkId: z.string(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.linkId, kind: "link" }, { write: true });
-    return json(await unlinkBlocks(args, sub));
-  }));
-
+  // ── Commentaires (revue) ────────────────────────────────────────────────────
   server.registerTool("mem_comment", {
     description:
       "Annote un bloc/document/section. targetType ∈ BLOCK|DOCUMENT|SECTION. `authorKind` human|agent (défaut human).",
@@ -723,14 +598,6 @@ function buildServer(sub: string): McpServer {
   }, guarded(async (args) => {
     await assertAccess(sub, { id: args.targetId, kind: "section" }, { write: true });
     return json(await mergeSections(args, sub));
-  }));
-
-  server.registerTool("mem_deprecate_document", {
-    description: "Passe un document en DEPRECATED. `supersededBy` (id du document remplaçant) tracé en révision.",
-    inputSchema: { id: z.string(), supersededBy: z.string().optional(), reason: z.string() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "document" }, { write: true });
-    return json(await deprecateDocument(args, sub));
   }));
 
   server.registerTool("mem_revisions", {
