@@ -1,87 +1,89 @@
-# Contrôle d'accès
+# Access control
 
-Qui accède à quelle KB. **Remplace la spec §2.7** (isolation par Organizations Logto, abandonnée avec la migration Supabase). **Refonte issue #60 (2026-06-12)** : l'org = tenant ; chaque KB porte son périmètre.
+Who accesses which KB. **Supersedes spec §2.7** (isolation via Logto
+Organizations, dropped with the Supabase migration). **Rework from issue #60
+(2026-06-12)**: the org = tenant; each KB carries its own perimeter.
 
-## Modèle
+## Model
 
-| Table | Rôle |
+| Table | Role |
 |---|---|
-| `mem_orgs` (slug, name, personal_for) | un **tenant** (annuaire de membres) ; `personal_for` = org perso auto-provisionnée du user (sub, unique ; null = org normale) |
-| `mem_memberships` (org_id, user_id, role) | user Supabase (`sub`) ↔ org, PK composite |
-| `mem_workspaces.org_id` → `mem_orgs` | chaque KB appartient à UNE org (tenant) |
-| `mem_workspaces.visibility` | `org` (membres de l'org, rôle d'org en défaut) \| `private` (grants seuls) \| `public` (lecture mondiale, anonyme incluse + galerie + recherche publique) |
-| `mem_workspace_grants` (workspace_id, user_id, role) | accès explicite à UNE KB — élévation d'un membre, restriction via private, **guest externe** |
+| `mem_orgs` (slug, name, personal_for) | a **tenant** (member directory); `personal_for` = the user's auto-provisioned personal org (sub, unique; null = normal org) |
+| `mem_memberships` (org_id, user_id, role) | Supabase user (`sub`) ↔ org, composite PK |
+| `mem_workspaces.org_id` → `mem_orgs` | each KB belongs to ONE org (tenant) |
+| `mem_workspaces.visibility` | `org` (org members, org role by default) \| `private` (grants only) \| `public` (world read, anonymous included + gallery + public search) |
+| `mem_workspace_grants` (workspace_id, user_id, role) | explicit access to ONE KB — elevating a member, restricting via private, **external guest** |
 
-Règles (décision 2026-06-12) :
-- **Accès au contenu** : rôle effectif = max(grant explicite, rôle d'org si `visibility=org`) — `effectiveRole()` dans `_shared/access.ts`. Granularité = workspace entier (pas de per-section, pas d'ACL fractales).
-- **Gouvernance** (partager, visibility, archiver, transférer) = **admin de l'ORG propriétaire uniquement** (`assertWorkspaceAdmin`). Un grant ne vaut que `member` (lecture) ou `curator` (écriture) — jamais la gouvernance ; le transfert exige l'admin des DEUX orgs (anti-exfiltration).
-- Une KB `private` : contenu invisible sans grant, mais son **existence** est visible des org-admins (sinon ingouvernable) — `myRole: null` dans la topologie. Le passage à private pose un grant `curator` au caller (il garde la lecture ; la gouvernance lui reste par l'org).
-- Une KB `public` : **lecture (`member`) pour TOUS, anonyme inclus** (`effectiveRole` renvoie `member` même pour `sub === ""`). L'org propriétaire **garde son rôle d'org** (elle cure sa base publique) ; les grants élèvent toujours. C'est un sur-ensemble de `org` + lecture mondiale, jamais une rétrogradation. Les KB publiques d'autres orgs **n'entrent pas** dans « mes bases » (`accessibleWorkspaceIds`) — on les découvre par la **galerie publique** ou la **recherche publique**, ou en les épinglant (`mem_use_workspace`). L'écriture reste curator/admin → l'anonyme ne peut jamais muter.
+Rules (decision 2026-06-12):
+- **Content access**: effective role = max(explicit grant, org role if `visibility=org`) — `effectiveRole()` in `_shared/access.ts`. Granularity = whole workspace (no per-section, no fractal ACLs).
+- **Governance** (share, visibility, archive, transfer) = **admin of the OWNING ORG only** (`assertWorkspaceAdmin`). A grant only confers `member` (read) or `curator` (write) — never governance; transfer requires the admin of BOTH orgs (anti-exfiltration).
+- A `private` KB: content invisible without a grant, but its **existence** is visible to org-admins (otherwise ungovernable) — `myRole: null` in the topology. Going private sets a `curator` grant for the caller (they keep read access; governance stays theirs via the org).
+- A `public` KB: **read (`member`) for EVERYONE, anonymous included** (`effectiveRole` returns `member` even for `sub === ""`). The owning org **keeps its org role** (it curates its public base); grants always elevate. It is a superset of `org` + world read, never a downgrade. Public KBs from other orgs **do not enter** "my bases" (`accessibleWorkspaceIds`) — they are discovered through the **public gallery** or **public search**, or by pinning them (`mem_use_workspace`). Writing stays curator/admin → the anonymous user can never mutate.
 
-### Surfaces publiques (sans auth)
+### Public surfaces (no auth)
 
-- **Web viewer** : `api/index.ts` accepte les **GET anonymes** (token absent ⇒ `sub=""`) ; chaque route reste gardée par `assertAccess`, donc seul le périmètre `public` répond (sinon refus indistinct). Les mutations (POST/DELETE) exigent toujours un token valide. Routes ouvertes : `GET /public/workspaces` (annuaire) et `GET /public/search?q=` (recherche plein-texte sur toutes les KB publiques). Le front : route `/public` (`PublicGalleryView`), et `/w/:ws` lisible sans session (le journal de révisions est masqué à l'anonyme — pas de fuite d'identités).
-- **MCP** : reste **authentifié** (OAuth). Un user connecté lit une KB publique en la nommant (slug / `mem_use_workspace`) — `effectiveRole` lui ouvre la lecture — ou la découvre via le verbe **`mem_public_search`** (recherche sur toutes les KB publiques, sans appartenance requise). On **n'expose pas** le MCP en anonyme.
-- **Rate limit** : `search_public` (60/min) ne compte que les appels authentifiés (`sub` vide = no-op) ; l'anonyme est borné par le WAF Cloudflare/IP sur `me.mento.cc/api`.
+- **Web viewer**: `api/index.ts` accepts **anonymous GETs** (token absent ⇒ `sub=""`); each route stays guarded by `assertAccess`, so only the `public` perimeter responds (otherwise an indistinct refusal). Mutations (POST/DELETE) always require a valid token. Open routes: `GET /public/workspaces` (directory) and `GET /public/search?q=` (full-text search over all public KBs). The frontend: route `/public` (`PublicGalleryView`), and `/w/:ws` readable without a session (the revision journal is hidden from the anonymous user — no leak of identities).
+- **MCP**: stays **authenticated** (OAuth). A signed-in user reads a public KB by naming it (slug / `mem_use_workspace`) — `effectiveRole` opens read access — or discovers it via the **`mem_public_search`** verb (search over all public KBs, no membership required). We **do not expose** MCP anonymously.
+- **Rate limit**: `search_public` (60/min) only counts authenticated calls (empty `sub` = no-op); the anonymous user is bounded by the Cloudflare WAF/IP on `me.mento.cc/api`.
 
-**Org perso** : provisionnée au premier accès topologique (`ensurePersonalOrg`, idempotente, `personal_for` unique) — « Perso (xxx) », le user en est admin. Tout compte (guest compris) peut donc créer ses KB chez lui et les promouvoir plus tard (transfert = changement de tenant).
+**Personal org**: provisioned on first topological access (`ensurePersonalOrg`, idempotent, `personal_for` unique) — "Personal (xxx)", the user is its admin. Any account (guests included) can therefore create its own KBs at home and promote them later (transfer = change of tenant).
 
-## Rôles
+## Roles
 
-| role | lecture | écriture (Lot 2) |
+| role | read | write (Lot 2) |
 |---|---|---|
-| `member` | oui | non |
-| `curator` | oui | oui |
-| `admin` | oui | oui |
+| `member` | yes | no |
+| `curator` | yes | yes |
+| `admin` | yes | yes |
 
-Rangs dans `supabase/functions/_shared/access.ts` (`ROLE_RANK`) ; écriture = rang ≥ curator.
+Ranks in `supabase/functions/_shared/access.ts` (`ROLE_RANK`); write = rank ≥ curator.
 
 ## Enforcement
 
-- `_shared/access.ts` : `effectiveRole(sub, wsId)`, `accessibleWorkspaceIds(sub)` (org-visibles ∪ grantées), `assertAccess(sub, ref, {write?})`, `assertWorkspaceAdmin(sub, slug)` (**admin de l'org propriétaire** — la gouvernance).
-- `ref` résout le workspace ciblé depuis `{workspace}` (slug) | `{path}` | `{id, kind: section|document|block|ingestion|link|comment}`.
-- Câblé dans `supabase/functions/mcp/index.ts` (`buildServer(sub)`, chaque verbe gardé) et `api/index.ts` (par route). `mem_workspaces` est filtré ; refus → 403 / `isError`.
-- **Ops composites** : autoriser sur les entités RÉELLES résolues, pas un anchor fourni par le caller (cf. fix IDOR `mem_reorder`).
-- Le `sub` vient du JWT vérifié (JWKS) par `authenticate()`.
+- `_shared/access.ts`: `effectiveRole(sub, wsId)`, `accessibleWorkspaceIds(sub)` (org-visible ∪ granted), `assertAccess(sub, ref, {write?})`, `assertWorkspaceAdmin(sub, slug)` (**admin of the owning org** — governance).
+- `ref` resolves the targeted workspace from `{workspace}` (slug) | `{path}` | `{id, kind: section|document|block|ingestion|link|comment}`.
+- Wired in `supabase/functions/mcp/index.ts` (`buildServer(sub)`, each verb guarded) and `api/index.ts` (per route). `mem_workspaces` is filtered; refusal → 403 / `isError`.
+- **Composite ops**: authorize on the REAL resolved entities, not an anchor supplied by the caller (cf. the `mem_reorder` IDOR fix).
+- The `sub` comes from the JWT verified (JWKS) by `authenticate()`.
 
-## Partage : le périmètre se règle sur la KB (par l'org-admin)
+## Sharing: the perimeter is set on the KB (by the org-admin)
 
-Geste UI : bouton **Partager** dans la barre du viewer (org-admins) ou `/org/:slug/bases` → « partager » — composant `SharePanel.vue` (périmètre + « qui a accès » unifié grants/hérités + invitation). Verbe agent : `mem_grant`/`mem_grants`/`mem_set_visibility`.
+UI gesture: **Share** button in the viewer toolbar (org-admins) or `/org/:slug/bases` → "share" — `SharePanel.vue` component (perimeter + unified "who has access" grants/inherited + invitation). Agent verb: `mem_grant`/`mem_grants`/`mem_set_visibility`.
 
-- **Toute l'équipe** : `visibility=org` (défaut) — les membres de l'org accèdent avec leur rôle d'org (`inherited` dans `mem_grants`).
-- **Sous-ensemble / perso dans l'équipe** : `visibility=private` + grants.
-- **Externe (guest)** : `mem_grant({workspace, email, role: member|curator})` — compte provisionné + email d'invitation (même flux GoTrue que les membres d'org, atterrissage grant). Il voit la KB dans « Partagées avec moi » (menu org + `shared` de `mem_workspaces`), sans entrer dans l'org.
-- **Ouvert à tous (public)** : `visibility=public` (`mem_set_visibility` ou l'option « Public » du SharePanel) — lecture/recherche par quiconque, sans compte (galerie `/public` + `mem_public_search`). Réservé à l'org-admin (gouvernance). L'écriture reste à l'org/curateurs.
-- **Changer de tenant** (promouvoir une KB perso → équipe, remettre au client) : `mem_transfer_workspace` — admin des deux orgs. Le périmètre (visibility/grants) suit la KB.
+- **The whole team**: `visibility=org` (default) — org members access with their org role (`inherited` in `mem_grants`).
+- **Subset / personal within the team**: `visibility=private` + grants.
+- **External (guest)**: `mem_grant({workspace, email, role: member|curator})` — account provisioned + invitation email (same GoTrue flow as org members, grant landing). They see the KB under "Shared with me" (org menu + `shared` from `mem_workspaces`), without joining the org.
+- **Open to all (public)**: `visibility=public` (`mem_set_visibility` or the "Public" option of the SharePanel) — read/search by anyone, no account (gallery `/public` + `mem_public_search`). Reserved for the org-admin (governance). Writing stays with the org/curators.
+- **Change tenant** (promote a personal KB → team, hand back to the client): `mem_transfer_workspace` — admin of both orgs. The perimeter (visibility/grants) follows the KB.
 
-## CLI admin — `npm run admin`
+## Admin CLI — `npm run admin`
 
-Cible la DB pointée par `DATABASE_URL` (Supabase direct pour la prod, local sinon). `email→sub` résolu via `auth.users` (présent seulement sur Supabase).
+Targets the DB pointed at by `DATABASE_URL` (Supabase direct for prod, local otherwise). `email→sub` resolved via `auth.users` (present only on Supabase).
 
 ```bash
-npm run admin -- whoami <email>                  # sub Supabase d'un email
+npm run admin -- whoami <email>                  # a user's Supabase sub from email
 npm run admin -- org-create <slug> <name>
 npm run admin -- member-add <org-slug> <email|sub> <role>   # role = admin|curator|member
 npm run admin -- ws-assign <ws-slug> <org-slug>
 npm run admin -- list
 ```
 
-Prod : exporte `DATABASE_URL` (URL Postgres directe de ton projet) depuis ton coffre à secrets, puis `npm --prefix server run admin -- <cmd>`.
-Le CLI n'a pas de `member-remove`/`org-create-ws` → pour ces cas, script `tsx` ponctuel dans `server/` (importe `db` depuis `./src/db.js`).
+Prod: export `DATABASE_URL` (the direct Postgres URL of your project) from your secret vault, then `npm --prefix server run admin -- <cmd>`.
+The CLI has no `member-remove`/`org-create-ws` → for those cases, a one-off `tsx` script in `server/` (import `db` from `./src/db.js`).
 
-## UI admin (SPA `/admin`) — `_shared/admin.ts`
+## Admin UI (SPA `/admin`) — `_shared/admin.ts`
 
-**UI** : pages par org sur `/org/:slug/(bases|membres|reglages)` (onglets) ; org switchée
-depuis la barre (menu près du compte : mes orgs, ⚙ gérer, + nouvelle organisation) ; le
-sélecteur de bases ne montre que les bases de l'org courante ; `/admin` redirige (compat).
-**API** — gère **orgs et membres** sans CLI : `GET /admin/orgs` (orgs du caller + membres + bases),
-`POST /admin/orgs` (créer une org — le créateur devient admin ; `DELETE` si org vide),
-`POST /admin/invite` (nouveau compte → **email d'invitation** GoTrue `/invite` via SMTP custom ;
-repli lien à transmettre si l'envoi échoue), `POST /admin/invite/resend` (magic link) et
-`/admin/invite/link` (lien manuel — ⚠ one-shot, les previews WhatsApp/Slack peuvent le consommer),
-`DELETE /admin/members` (anti-lockout dernier admin), `POST /admin/workspaces` (créer une KB).
-Membre **pending** = provisionné, `last_sign_in_at` null. À l'arrivée du lien (`/callback`,
-`type=invite`), le viewer propose de **définir un mot de passe** (compte provisionné sans mdp —
-sinon reconnexion par magic link uniquement). Édition doctrine/métadonnées/archivage :
-`_shared/workspace_mgmt.ts` + `POST /workspace/doctrine|update|archive`. Tout gated org-admin
-(orgs/membres/KB) ou curator (doctrine). SMTP/OTP : cf. `deployment-edge.md` § Auth.
+**UI**: per-org pages on `/org/:slug/(bases|membres|reglages)` (tabs); org switched
+from the bar (menu near the account: my orgs, ⚙ manage, + new organization); the
+base selector only shows the bases of the current org; `/admin` redirects (compat).
+**API** — manages **orgs and members** without the CLI: `GET /admin/orgs` (the caller's orgs + members + bases),
+`POST /admin/orgs` (create an org — the creator becomes admin; `DELETE` if the org is empty),
+`POST /admin/invite` (new account → **invitation email** GoTrue `/invite` via custom SMTP;
+fallback link to forward if sending fails), `POST /admin/invite/resend` (magic link) and
+`/admin/invite/link` (manual link — ⚠ one-shot, WhatsApp/Slack previews can consume it),
+`DELETE /admin/members` (last-admin anti-lockout), `POST /admin/workspaces` (create a KB).
+A **pending** member = provisioned, `last_sign_in_at` null. When the link arrives (`/callback`,
+`type=invite`), the viewer offers to **set a password** (account provisioned without a password —
+otherwise sign-in is by magic link only). Doctrine/metadata/archive editing:
+`_shared/workspace_mgmt.ts` + `POST /workspace/doctrine|update|archive`. All gated org-admin
+(orgs/members/KB) or curator (doctrine). SMTP/OTP: see `deployment-edge.md` § Auth.

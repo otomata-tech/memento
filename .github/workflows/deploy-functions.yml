@@ -1,13 +1,13 @@
 name: Deploy edge functions
 
-# Déploie les Edge Functions Supabase (mcp + api) sur push main.
-# On migre la DB AVANT de déployer (sinon une function qui lit une colonne pas encore
-# migrée casse). Steps séquentiels fail-fast.
-# Déploie l'instance hébergée d'Otomata ; gardé par repository_owner (un fork ne déploie
-# pas notre prod — configure tes secrets/variable et ton projet Supabase pour la tienne).
+# Deploys the Supabase Edge Functions (mcp + api) on push to main.
+# We migrate the DB BEFORE deploying (otherwise a function reading a not-yet-migrated
+# column breaks). Sequential fail-fast steps.
+# Deploys Otomata's hosted instance; gated by repository_owner (a fork does not deploy
+# our prod — configure your own secrets/variable and Supabase project for yours).
 #
-# Secrets requis : SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL (session pooler, IPv4).
-# Variable requise : SUPABASE_PROJECT_REF.
+# Required secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL (session pooler, IPv4).
+# Required variable: SUPABASE_PROJECT_REF.
 
 on:
   push:
@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # 1. Migrations DB (prod) — AVANT le deploy.
+      # 1. DB migrations (prod) — BEFORE the deploy.
       - uses: actions/setup-node@v6
         with:
           node-version: 20
@@ -44,7 +44,7 @@ jobs:
           npm ci
           npm run db:migrate
 
-      # 2. Deploy functions (échec de la migration ⇒ on n'arrive jamais ici).
+      # 2. Deploy functions (migration failure ⇒ we never reach here).
       - uses: supabase/setup-cli@v2
         with:
           version: latest

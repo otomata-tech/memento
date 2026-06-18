@@ -1,97 +1,98 @@
-# Memento — les principes
+# Memento — the principles
 
-*Memento mori, note tout.*
+*Memento mori — note everything.*
 
-Memento est un **substrat de connaissance pour agents** : structuré, sourcé, vivant
-et auditable, consommé via MCP. Ce document explique le *pourquoi* en quelques
-minutes de lecture — sans détail d'implémentation. Pour le *comment* : la
-[spec fondatrice](specs/knowledge-base.md) ; pour s'y connecter :
+Memento is a **knowledge substrate for agents**: structured, sourced, living
+and auditable, consumed via MCP. This document explains the *why* in a few
+minutes of reading — no implementation detail. For the *how*: the
+[founding spec](specs/knowledge-base.md); to connect to it:
 [connect-mcp](connect-mcp.md).
 
-## Le problème
+## The problem
 
-Un RAG documentaire stocke un **sac de documents** : on y retrouve des passages,
-pas du savoir. Ce qui manque pour représenter un **savoir-faire** — concepts,
-règles, exceptions, procédures — :
+A document RAG stores a **bag of documents**: you retrieve passages, not
+knowledge. What it lacks to represent **know-how** — concepts, rules,
+exceptions, procedures — is:
 
-- savoir **d'où vient** chaque affirmation (et si elle est encore vraie) ;
-- relier les morceaux entre eux (cette règle *dépend de* ce principe, *contredit*
-  cette note plus ancienne) ;
-- faire **évoluer** la base sans qu'elle se dégrade : qui a changé quoi, pourquoi,
-  et avec quelle validation.
+- knowing **where** each statement comes from (and whether it still holds);
+- linking the pieces together (this rule *depends on* that principle,
+  *contradicts* that older note);
+- letting the base **evolve** without degrading: who changed what, why, and
+  with which validation.
 
-Les wikis le font pour les humains, mal pour les agents (pas de surface
-programmable, pas d'atome adressable). Les vector stores le font pour la
-similarité, pas pour la structure. Memento occupe ce créneau : **une base de
-connaissance que des agents lisent ET maintiennent, sous contrôle humain.**
+Wikis do this for humans, poorly for agents (no programmable surface, no
+addressable atom). Vector stores do it for similarity, not for structure.
+Memento fills that gap: **a knowledge base that agents read AND maintain,
+under human control.**
 
-## Les six idées
+## The six ideas
 
-### 1. Le bloc est l'atome
+### 1. The block is the atom
 
-L'unité n'est ni le document ni le chunk : c'est le **bloc typé** (principe, règle,
-exception, exemple, procédure, mise en garde, définition…). Chaque bloc est
-adressable, et tout s'attache à lui : **sources** (d'où ça vient), **liens typés**
-vers d'autres blocs (`references`, `depends_on`, `contradicts`, `supersedes`),
-**commentaires**, **statut de vérification**. Un bloc qui aurait besoin de deux
-sources pour deux affirmations doit être scindé : la maille fine est la garantie
-d'auditabilité.
+The unit is neither the document nor the chunk: it is the **typed block**
+(principle, rule, exception, example, procedure, caveat, definition…). Each
+block is addressable, and everything attaches to it: **sources** (where it
+comes from), **typed links** to other blocks (`references`, `depends_on`,
+`contradicts`, `supersedes`), **comments**, **verification status**. A block
+that would need two sources for two statements must be split: fine grain is the
+guarantee of auditability.
 
-### 2. Contrainte en haut, liberté en bas
+### 2. Constraint at the top, freedom at the bottom
 
-Chaque base (« workspace ») a une **épine dorsale** : un arbre de sections strict et
-peu profond (≤ 3 niveaux), qui tient la carte mentale. En dessous, les documents
-composent librement des blocs. La structure ne dérive pas, le contenu respire.
+Every base ("workspace") has a **backbone**: a strict, shallow section tree
+(≤ 3 levels) that holds the mental map. Below it, documents freely compose
+blocks. The structure does not drift, the content breathes.
 
 ### 3. Doctrine-first
 
-Un agent n'« aspire » jamais la base. Il commence par `mem_doctrine` : une **carte
-compacte** (préambule de méta-instructions + arbre des sections + conventions),
-toujours chargeable en contexte. Puis il fore — 2-3 sections, un document, un bloc.
-Le serveur ne rend jamais de mur de texte non demandé.
+An agent never "vacuums up" the base. It starts with `mem_doctrine`: a
+**compact map** (meta-instruction preamble + section tree + conventions),
+always loadable into context. Then it drills — 2-3 sections, a document, a
+block. The server never returns an unrequested wall of text.
 
-### 4. Serveur bête, agent intelligent
+### 4. Dumb server, smart agent
 
-Le serveur stocke, garantit les invariants (états invalides impossibles) et
-journalise l'intention. **Aucun LLM côté serveur.** L'extraction de claims, la
-classification, le jugement : c'est l'agent appelant. Corollaire :
-**l'intelligence est à l'écriture, la lecture est déterministe** — on paie le coût
-de structuration une fois, à l'entrée, et toutes les lectures suivantes sont
-fiables et bon marché.
+The server stores, guarantees invariants (invalid states are impossible) and
+journals intent. **No LLM on the server side.** Claim extraction,
+classification, judgment: that is the calling agent. Corollary:
+**intelligence is at write time, reads are deterministic** — you pay the cost
+of structuring once, at the entrance, and every subsequent read is reliable and
+cheap.
 
-### 5. Propose-valide : rien n'entre sans revue
+### 5. Propose-validate: nothing enters without review
 
-L'ingestion de savoir passe par une boucle : l'agent **propose** un change-set
-classé (`CONFIRM` / `ENRICH` / `CONTRADICT` / `OBSOLETE`), un humain **revoit**,
-puis le change-set est appliqué — transactionnellement, avec une révision motivée
-par opération. Les **contradictions ne sont jamais auto-appliquées** : c'est le cas
-précieux, celui qui mérite un arbitrage humain. Tout l'historique est un journal
-d'intentions (« pourquoi » inclus), pas un diff brut.
+Knowledge ingestion goes through a loop: the agent **proposes** a classified
+change-set (`CONFIRM` / `ENRICH` / `CONTRADICT` / `OBSOLETE`), a human
+**reviews**, then the change-set is applied — transactionally, with a motivated
+revision per operation. **Contradictions are never auto-applied**: that is the
+precious case, the one that deserves human arbitration. The whole history is a
+journal of intent ("why" included), not a raw diff.
 
-### 6. Une base = un périmètre de partage
+### 6. One base = one sharing perimeter
 
-Le multi-workspace ne découpe pas par projet technique mais par **périmètre de
-partage** : une base par mission/client, une base perso. L'accès suit : une
-organisation possède la base, ses membres y accèdent selon leur rôle
-(admin / curator / member). Pas de base « générale » fourre-tout.
+Multi-workspace does not split by technical project but by **sharing
+perimeter**: one base per mission/client, one personal base. Access follows: an
+organization owns the base, its members access it according to their role
+(admin / curator / member). No catch-all "general" base.
 
-## Ce que ça permet
+## What it enables
 
-- Un agent (claude.ai, Claude Code…) qui **consulte la doctrine avant d'agir** et
-  cite ses sources au bloc près.
-- Une veille qui **enrichit la base en continu** sans jamais l'écraser : chaque
-  apport est proposé, classé, revu.
-- Un savoir qui **survit aux réorganisations** : les sources restent ancrées aux
-  blocs, le journal garde le pourquoi de chaque mutation.
-- Plusieurs bases étanches (clients, perso) servies par **le même serveur**, le
-  même compte, le même connecteur.
+- An agent (claude.ai, Claude Code…) that **consults the doctrine before
+  acting** and cites its sources down to the block.
+- A watch process that **continuously enriches the base** without ever
+  overwriting it: each contribution is proposed, classified, reviewed.
+- Knowledge that **survives reorganizations**: sources stay anchored to blocks,
+  the journal keeps the why of each mutation.
+- Several airtight bases (clients, personal) served by **the same server**, the
+  same account, the same connector.
 
-## Pour aller plus loin
+## Going further
 
-- [Spec fondatrice](specs/knowledge-base.md) — modèle de données, surface MCP
-  (39 verbes `mem_*`), invariants, boucle d'ingestion déroulée.
-- [Recherche amont](research/) — mémoire & retrieval agentique (synthèse pédagogique
-  + fiche sourcée) ; fonde « intelligence à l'écriture / lecture déterministe ».
-- [Contrôle d'accès](access-control.md) — orgs, memberships, rôles.
-- [Déploiement](deployment-edge.md) — topologie prod (Cloudflare Pages + Supabase Edge).
-- [Se connecter](connect-mcp.md) — brancher Memento à claude.ai ou Claude Code.
+- [Founding spec](specs/knowledge-base.md) — data model, MCP surface (39 `mem_*`
+  verbs), invariants, ingestion loop walked through.
+- [Upstream research](research/) — agentic memory & retrieval (pedagogical
+  synthesis + sourced sheet); grounds "intelligence at write time / deterministic
+  reads".
+- [Access control](access-control.md) — orgs, memberships, roles.
+- [Deployment](deployment-edge.md) — prod topology (Cloudflare Pages + Supabase Edge).
+- [Connecting](connect-mcp.md) — wiring Memento to claude.ai or Claude Code.

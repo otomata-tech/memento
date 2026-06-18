@@ -1,9 +1,9 @@
 name: Deploy viewer to Cloudflare Pages
 
-# Le viewer (app/) est hébergé sur Cloudflare Pages ; les Pages Functions (app/functions/)
-# proxient /mcp, /api/*, /.well-known/* vers les Edge Functions Supabase.
-# Déploie l'instance hébergée d'Otomata (mento.cc) ; gardé par repository_owner pour
-# qu'un fork ne déploie pas notre prod (configure tes propres secrets/projet pour la tienne).
+# The viewer (app/) is hosted on Cloudflare Pages; the Pages Functions (app/functions/)
+# proxy /mcp, /api/*, /.well-known/* to the Supabase Edge Functions.
+# Deploys Otomata's hosted instance (mento.cc); gated by repository_owner so that
+# a fork does not deploy our prod (configure your own secrets/project for yours).
 
 on:
   push:

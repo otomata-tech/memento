@@ -1,105 +1,112 @@
-# Connecter Memento (MCP)
+# Connecting Memento (MCP)
 
-Guide pour brancher la base de connaissance Memento à un client MCP (claude.ai, Claude
-Desktop, Claude Code, autres). Le serveur est **distant, authentifié OAuth** — rien à
-installer en local.
+Guide to wiring the Memento knowledge base to an MCP client (claude.ai, Claude
+Desktop, Claude Code, others). The server is **remote, OAuth-authenticated** —
+nothing to install locally.
 
-## Prérequis
+## Prerequisites
 
-1. **Un compte** sur `me.mento.cc` (login Supabase). Si tu as reçu un **lien
-   d'invitation**, ouvre-le une fois : il crée ton compte et te connecte au viewer.
-2. **Être membre d'une organisation** qui possède au moins une base (workspace). Sinon le
-   serveur se connecte mais `mem_workspaces` renvoie une liste vide (accès à rien). Demande
-   à un admin de t'ajouter (UI `/admin` → Inviter).
+1. **An account** on `me.mento.cc` (Supabase login). If you received an
+   **invitation link**, open it once: it creates your account and signs you in to
+   the viewer.
+2. **Being a member of an organization** that owns at least one base (workspace).
+   Otherwise the server connects but `mem_workspaces` returns an empty list
+   (access to nothing). Ask an admin to add you (UI `/admin` → Invite).
 
-Point de terminaison MCP : **`https://mcp.mento.cc/mcp`**
+MCP endpoint: **`https://mcp.mento.cc/mcp`**
 
 ## claude.ai (web) / Claude Desktop
 
-1. **Réglages → Connecteurs → Ajouter un connecteur personnalisé**.
-2. Colle l'URL `https://mcp.mento.cc/mcp`. Nom : `Memento`.
-3. Valide → une fenêtre OAuth s'ouvre :
-   - le client s'enregistre tout seul (DCR) ;
-   - **connecte-toi** avec ton compte Memento (Supabase) ;
-   - **page de consentement** → « Autoriser ».
-4. Le connecteur passe « connecté ». Les outils `mem_*` apparaissent.
+1. **Settings → Connectors → Add custom connector**.
+2. Paste the URL `https://mcp.mento.cc/mcp`. Name: `Memento`.
+3. Confirm → an OAuth window opens:
+   - the client registers itself (DCR);
+   - **sign in** with your Memento account (Supabase);
+   - **consent page** → "Authorize".
+4. The connector turns "connected". The `mem_*` tools appear.
 
-> Si tu ne vois pas de nouveaux verbes après une mise à jour serveur : **déconnecte /
-> reconnecte** le connecteur (la liste d'outils est figée à la connexion).
+> If you don't see new verbs after a server update: **disconnect /
+> reconnect** the connector (the tool list is frozen at connection time).
 
 ## Claude Code (CLI)
 
 ```bash
 claude mcp add memento https://mcp.mento.cc/mcp --transport http
 ```
-Au premier appel, Claude Code ouvre le navigateur pour l'OAuth (login Supabase + consentement),
-puis mémorise le token. Vérifier : `claude mcp list`.
+On the first call, Claude Code opens the browser for OAuth (Supabase login +
+consent), then caches the token. Verify: `claude mcp list`.
 
-## Autres clients (Mistral Le Chat, ChatGPT)
+## Other clients (Mistral Le Chat, ChatGPT)
 
-Le serveur est **agnostique au client** : tout client MCP gérant un serveur distant en
-**OAuth 2.1 + DCR** (RFC 7591) et **RFC 9728** (`401` + `WWW-Authenticate` → PRM) se branche
-sans rien changer côté Memento. Validé live le **2026-06-17** sur Le Chat *et* ChatGPT.
+The server is **client-agnostic**: any MCP client handling a remote server over
+**OAuth 2.1 + DCR** (RFC 7591) and **RFC 9728** (`401` + `WWW-Authenticate` →
+PRM) wires up without any change on the Memento side. Validated live on
+**2026-06-17** on Le Chat *and* ChatGPT.
 
 ### Mistral Le Chat
 
-1. **Connectors** → **+ Add Connector** → onglet **Custom MCP Connector**.
-2. **Server URL** : `https://mcp.mento.cc/mcp` — nom : `Memento` → **Connect**.
-3. Auto-détection de l'auth → flux OAuth Supabase (login + consentement).
+1. **Connectors** → **+ Add Connector** → **Custom MCP Connector** tab.
+2. **Server URL**: `https://mcp.mento.cc/mcp` — name: `Memento` → **Connect**.
+3. Auth auto-detection → Supabase OAuth flow (login + consent).
 
-- Feature **admin-only** ; sur Free/Pro/Student l'owner du compte est admin par défaut.
-- **Pas de dynamic tool discovery** : liste d'outils figée à la connexion → après une MAJ
-  serveur, déconnecter/reconnecter pour voir les nouveaux verbes.
+- **Admin-only** feature; on Free/Pro/Student the account owner is admin by default.
+- **No dynamic tool discovery**: tool list frozen at connection time → after a
+  server update, disconnect/reconnect to see the new verbs.
 
 ### ChatGPT (Developer Mode)
 
 1. **Settings → Apps & Connectors → Advanced settings → Developer Mode** (ON).
-2. **Create** → **MCP Server URL** : `https://mcp.mento.cc/mcp`, **Authentication** : OAuth.
-3. Flux OAuth Supabase → activer les outils `mem_*` dans la fiche du connecteur.
+2. **Create** → **MCP Server URL**: `https://mcp.mento.cc/mcp`, **Authentication**: OAuth.
+3. Supabase OAuth flow → enable the `mem_*` tools in the connector card.
 
-- Plans **Plus / Pro / Business / Enterprise / Edu**, **web only**.
-- **DCR supporté** (pas seulement CIMD) ; **pas d'exigence `search`/`fetch`** — tous les
-  verbes `mem_*` passent. Les **write actions** sont confirmées par défaut (colle à la
-  boucle propose-valide).
-- Le toggle *« Enforce CSP in developer mode »* ne concerne que les **MCP Apps à UI rendue**
-  (widgets/iframes) → **sans impact** sur Memento (tools-only, retours JSON/texte).
+- **Plus / Pro / Business / Enterprise / Edu** plans, **web only**.
+- **DCR supported** (not only CIMD); **no `search`/`fetch` requirement** — all
+  the `mem_*` verbs pass. **Write actions** are confirmed by default (matches the
+  propose-validate loop).
+- The *"Enforce CSP in developer mode"* toggle only concerns **rendered-UI MCP
+  Apps** (widgets/iframes) → **no impact** on Memento (tools-only, JSON/text
+  returns).
 
-> Risque résiduel commun à ces deux clients : le rendu de la page de consentement Supabase
-> (`/oauth/consent`) dans leur webview. Si l'OAuth tourne en rond, c'est là qu'il faut creuser
-> — côté Memento (redirect/consent), pas côté protocole.
+> Residual risk common to both clients: rendering the Supabase consent page
+> (`/oauth/consent`) in their webview. If OAuth loops, that's where to dig —
+> on the Memento side (redirect/consent), not the protocol side.
 
-## Premiers pas (doctrine-first)
+## First steps (doctrine-first)
 
-Le serveur est **sans état** : on nomme toujours la base. Flux recommandé que l'agent suit :
+The server is **stateless**: you always name the base. Recommended flow that the
+agent follows:
 
-1. `mem_workspaces` — liste les bases auxquelles **tu** as accès.
-2. `mem_doctrine({ workspace: "<slug>" })` — la carte : préambule + arbre des sections + conventions.
-3. Drill : `mem_section` / `mem_document` / `mem_block` (par `id` ou `path` — le `path` commence
-   par le slug de la base), ou `mem_search({ workspace, q })` (plein-texte par bloc).
+1. `mem_workspaces` — lists the bases **you** have access to.
+2. `mem_doctrine({ workspace: "<slug>" })` — the map: preamble + section tree + conventions.
+3. Drill: `mem_section` / `mem_document` / `mem_block` (by `id` or `path` — the
+   `path` starts with the base slug), or `mem_search({ workspace, q })` (full-text
+   per block).
 
-Exemple de prompt : « Avec Memento, donne-moi la carte de la base `demo`, puis ce que dit
-le critère HAS 1.7.4, sourcé. »
+Example prompt: "With Memento, give me the map of the `demo` base, then what the
+criterion HAS 1.7.4 says, sourced."
 
-## Écriture & boucle propose-valide
+## Writing & the propose-validate loop
 
-Réservé aux rôles **admin / curator** de l'org. L'agent ne mute jamais en aveugle : il
-**propose** un change-set (`mem_stage_changes`) → un humain le revoit (vue *Ingestions* du
-viewer ou `mem_ingestion_get`) → applique (`mem_apply_ingestion`) ou rejette. Les
-contradictions ne sont jamais appliquées automatiquement.
+Reserved for the org's **admin / curator** roles. The agent never mutates blind:
+it **proposes** a change-set (`mem_stage_changes`) → a human reviews it
+(*Ingestions* view of the viewer or `mem_ingestion_get`) → applies
+(`mem_apply_ingestion`) or rejects. Contradictions are never applied
+automatically.
 
-## Dépannage
+## Troubleshooting
 
-| Symptôme | Cause / fix |
+| Symptom | Cause / fix |
 |---|---|
-| Connexion OK mais `mem_workspaces` vide | Pas membre d'une org propriétaire d'une base → demande un accès. |
-| `401` / re-demande de login | Token expiré → relancer le flux OAuth (reconnecter le connecteur). |
-| « Accès refusé à ce workspace » | La base appartient à une org dont tu n'es pas membre. |
-| Écriture en `isError` « réservé admin/curator » | Ton rôle est `member` (lecture seule). |
-| Nouveaux verbes absents | Liste d'outils figée → déconnecter / reconnecter le connecteur. |
+| Connection OK but `mem_workspaces` empty | Not a member of an org owning a base → request access. |
+| `401` / re-prompts login | Token expired → restart the OAuth flow (reconnect the connector). |
+| "Access denied to this workspace" | The base belongs to an org you're not a member of. |
+| Write `isError` "reserved for admin/curator" | Your role is `member` (read-only). |
+| New verbs missing | Tool list frozen → disconnect / reconnect the connector. |
 
-## Repères techniques (pour l'admin)
+## Technical pointers (for the admin)
 
-- Auth : Supabase OAuth 2.1 + DCR ; la function est resource server RFC 9728 (PRM sur
-  `/.well-known/oauth-protected-resource`, vérif JWKS ES256). Détails : `docs/deployment-edge.md`.
-- Accès par workspace via orgs/memberships. Gestion : UI `/admin` ou CLI `npm run admin`.
-  Voir `docs/access-control.md`.
+- Auth: Supabase OAuth 2.1 + DCR; the function is an RFC 9728 resource server
+  (PRM on `/.well-known/oauth-protected-resource`, ES256 JWKS verification).
+  Details: `docs/deployment-edge.md`.
+- Per-workspace access via orgs/memberships. Management: UI `/admin` or CLI
+  `npm run admin`. See `docs/access-control.md`.

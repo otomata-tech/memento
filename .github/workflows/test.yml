@@ -1,8 +1,8 @@
 name: Tests
 
-# Tests d'intégration des Edge Functions (deno test) contre un Postgres réel.
-# Le schéma mem_* est appliqué via les migrations Drizzle (server/drizzle, 0015 inclus) ;
-# le schéma auth.users est provisionné par les tests eux-mêmes (cf. seedUser).
+# Integration tests of the Edge Functions (deno test) against a real Postgres.
+# The mem_* schema is applied via the Drizzle migrations (server/drizzle, 0015 included);
+# the auth.users schema is provisioned by the tests themselves (cf. seedUser).
 
 on:
   push:
@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # pgvector préinstallé : la migration embeddings (#10) fait `CREATE EXTENSION vector`.
+        # pgvector preinstalled: the embeddings migration (#10) runs `CREATE EXTENSION vector`.
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: tuls
@@ -44,10 +44,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 20
-      # On matérialise le schéma TS canonique (drizzle-kit push) plutôt que la chaîne
-      # de migrations SQL : celle-ci porte des étapes Supabase-only (pg_cron #0014,
-      # pgvector #0006) absentes d'un Postgres de CI. `push` crée toutes les tables
-      # mem_* dont les tests ont besoin, sans ces extensions. `--force` = non-interactif.
+      # We materialize the canonical TS schema (drizzle-kit push) rather than the SQL
+      # migration chain: the latter carries Supabase-only steps (pg_cron #0014,
+      # pgvector #0006) absent from a CI Postgres. `push` creates all the mem_*
+      # tables the tests need, without those extensions. `--force` = non-interactive.
       - name: Provision schema (drizzle push)
         working-directory: server
         run: |
