@@ -20,6 +20,7 @@ import { getDefaultWorkspace, setDefaultWorkspace, listPins, pinWorkspace, unpin
 import { listAccounts } from "../_shared/platform.ts";
 import { listGrants, grantAccess, revokeGrant, setVisibility } from "../_shared/grants.ts";
 import { logUsage, listUsageLogs } from "../_shared/usage_log.ts";
+import { listAgentChatLogs } from "../_shared/agent_log.ts";
 import { setDoctrine, updateWorkspace, archiveWorkspace } from "../_shared/workspace_mgmt.ts";
 import { authenticate } from "../_shared/auth.ts";
 import { assertAccess, assertWorkspaceAdmin, accessibleWorkspaceIds, AccessError, safeErrorMessage } from "../_shared/access.ts";
@@ -145,6 +146,14 @@ async function route(path: string, q: URLSearchParams, sub: string): Promise<unk
         workspace: q.get("workspace") ?? undefined,
         verb: q.get("verb") ?? undefined,
         kind: q.get("kind") ?? undefined,
+        limit: q.get("limit") ? Number(q.get("limit")) : undefined,
+      }, sub);
+    case "/agent-logs":
+      // Transcript of the public agent for a KB — curator/admin only (gated in the service).
+      requireAuthenticated(sub);
+      return listAgentChatLogs({
+        workspace: q.get("workspace")!,
+        noHits: q.get("noHits") === "1" || q.get("noHits") === "true",
         limit: q.get("limit") ? Number(q.get("limit")) : undefined,
       }, sub);
     default: return null;

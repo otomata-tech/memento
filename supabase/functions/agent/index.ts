@@ -18,6 +18,7 @@ import { accessibleWorkspaceIds, publicWorkspaceRefs } from "../_shared/access.t
 import { resolveWorkspaceBySlug } from "../_shared/paths.ts";
 import { authenticate } from "../_shared/auth.ts";
 import { assertWithinLimitByKey, currentUsage, LIMITS, RateLimitError, recordUsage } from "../_shared/ratelimit.ts";
+import { logAgentChat } from "../_shared/agent_log.ts";
 
 const MISTRAL_API_KEY = Deno.env.get("MISTRAL_API_KEY") ?? "";
 const MODEL = Deno.env.get("AGENT_MODEL") ?? "mistral-small-latest";
@@ -57,7 +58,7 @@ type PublicRef = { id: string; slug: string; org: string | null };
  *  is paraphrase-heavy by nature ("à quoi sert oto ?" must hit "Qu'est-ce qu'oto ?"),
  *  and pure lexical misses those (0 hit). The semantic leg costs one query embedding
  *  per search — negligible next to the Mistral turn, and bounded by the rate limits. */
-async function searchKb(ws: PublicRef, q: string): Promise<unknown> {
+async function searchKb(ws: PublicRef, q: string): Promise<{ hits: unknown[]; count: number }> {
   const res = await hybridSearch({
     workspaces: [{ id: ws.id, slug: ws.slug, org: ws.org ?? "?" }],
     q,
@@ -133,12 +134,15 @@ async function callMistral(messages: ChatMessage[], withTools: boolean): Promise
   return { message: data?.choices?.[0]?.message as ChatMessage, tokens: Number(data?.usage?.total_tokens ?? 0) };
 }
 
+/** Outcome of an agent turn — answer + retrieval/cost stats, fed to the chat log. */
+type AgentResult = { reply: string; steps: number; truncated?: boolean; tokens: number; hits: number; searches: number };
+
 async function runAgent(
   ws: PublicRef,
   doctrine: Awaited<ReturnType<typeof getDoctrine>>,
   message: string,
   history: { role: "user" | "assistant"; content: string }[],
-): Promise<{ reply: string; steps: number; truncated?: boolean; tokens: number }> {
+): Promise<AgentResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(doctrine) },
     ...history.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.content } as ChatMessage)),
@@ -146,19 +150,25 @@ async function runAgent(
   ];
 
   let tokens = 0;
+  const stats = { searches: 0, hits: 0 };
   for (let step = 0; step < MAX_STEPS; step++) {
     const { message: msg, tokens: t } = await callMistral(messages, true);
     tokens += t;
     messages.push(msg);
     const calls = msg.tool_calls ?? [];
-    if (!calls.length) return { reply: msg.content ?? "", steps: step, tokens };
+    if (!calls.length) return { reply: msg.content ?? "", steps: step, tokens, ...stats };
     for (const c of calls) {
       let result: unknown;
       try {
         const args = JSON.parse(c.function.arguments || "{}");
-        result = c.function.name === "search_kb"
-          ? await searchKb(ws, String(args.q ?? ""))
-          : { error: "unknown tool" };
+        if (c.function.name === "search_kb") {
+          const r = await searchKb(ws, String(args.q ?? ""));
+          stats.searches++;
+          stats.hits += r.count;
+          result = r;
+        } else {
+          result = { error: "unknown tool" };
+        }
       } catch (e) {
         result = { error: e instanceof Error ? e.message : String(e) };
       }
@@ -168,7 +178,7 @@ async function runAgent(
 
   // Loop saturated: one last turn WITHOUT tools to force an answer.
   const { message: final, tokens: tf } = await callMistral(messages, false);
-  return { reply: final.content ?? "", steps: MAX_STEPS, truncated: true, tokens: tokens + tf };
+  return { reply: final.content ?? "", steps: MAX_STEPS, truncated: true, tokens: tokens + tf, ...stats };
 }
 
 /** One Mistral turn IN STREAM. Forwards the content token by token via `onToken`,
@@ -243,7 +253,7 @@ async function runAgentStream(
   message: string,
   history: { role: "user" | "assistant"; content: string }[],
   send: (event: string, data: unknown) => void,
-): Promise<{ steps: number; tokens: number }> {
+): Promise<AgentResult> {
   const messages: ChatMessage[] = [
     { role: "system", content: buildSystemPrompt(doctrine) },
     ...history.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.content } as ChatMessage)),
@@ -251,17 +261,25 @@ async function runAgentStream(
   ];
 
   let tokens = 0;
+  const stats = { searches: 0, hits: 0 };
   for (let step = 0; step < MAX_STEPS; step++) {
     const { content, toolCalls, tokens: t } = await streamMistralTurn(messages, true, (tok) => send("token", { text: tok }));
     tokens += t;
-    if (!toolCalls.length) return { steps: step, tokens }; // answer already streamed
+    if (!toolCalls.length) return { reply: content, steps: step, tokens, ...stats }; // answer already streamed
     messages.push({ role: "assistant", content: content || null, tool_calls: toolCalls });
     for (const c of toolCalls) {
       send("status", { tool: c.function.name });
       let result: unknown;
       try {
         const args = JSON.parse(c.function.arguments || "{}");
-        result = c.function.name === "search_kb" ? await searchKb(ws, String(args.q ?? "")) : { error: "unknown tool" };
+        if (c.function.name === "search_kb") {
+          const r = await searchKb(ws, String(args.q ?? ""));
+          stats.searches++;
+          stats.hits += r.count;
+          result = r;
+        } else {
+          result = { error: "unknown tool" };
+        }
       } catch (e) {
         result = { error: e instanceof Error ? e.message : String(e) };
       }
@@ -269,8 +287,8 @@ async function runAgentStream(
     }
   }
   // Loop saturated: last streamed turn without tools.
-  const { tokens: tf } = await streamMistralTurn(messages, false, (tok) => send("token", { text: tok }));
-  return { steps: MAX_STEPS, tokens: tokens + tf };
+  const { content: finalContent, tokens: tf } = await streamMistralTurn(messages, false, (tok) => send("token", { text: tok }));
+  return { reply: finalContent, steps: MAX_STEPS, truncated: true, tokens: tokens + tf, ...stats };
 }
 
 const BUDGET_KEY = "__agent_budget__"; // global key for the daily token cap
@@ -349,6 +367,12 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req) => {
           const doctrine = await getDoctrine(workspace);
           const out = await runAgentStream(ws, doctrine, message, history, send);
           await recordUsage(BUDGET_KEY, "agent_budget", out.tokens);
+          // Best-effort transcript log — never let a log failure break the stream.
+          await logAgentChat({
+            workspace, org: ws.org, sub, ip: clientIp(req),
+            question: message, reply: out.reply,
+            hits: out.hits, searches: out.searches, steps: out.steps, tokens: out.tokens,
+          }).catch((e) => console.error("[agent] log:", e));
           send("done", { steps: out.steps });
         } catch (e) {
           console.error("[agent] stream:", e);
@@ -368,6 +392,11 @@ Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req) => {
     const doctrine = await getDoctrine(workspace);
     const out = await runAgent(ws, doctrine, message, history);
     await recordUsage(BUDGET_KEY, "agent_budget", out.tokens);
+    await logAgentChat({
+      workspace, org: ws.org, sub, ip: clientIp(req),
+      question: message, reply: out.reply,
+      hits: out.hits, searches: out.searches, steps: out.steps, tokens: out.tokens,
+    }).catch((e) => console.error("[agent] log:", e));
     return jsonRes({ reply: out.reply, steps: out.steps, truncated: out.truncated }, 200, cors);
   } catch (e) {
     console.error("[agent] chat:", e);

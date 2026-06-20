@@ -364,6 +364,29 @@ export const usageLogs = pgTable(
   ],
 );
 
+// ── Agent chat log: full transcript of public "agent mode" exchanges ───────────
+// One row per turn (question + agent reply + retrieval/cost metadata). Lets a KB's
+// curators see what people ask and where the agent fails (FAQ gaps). No raw IP:
+// a salted hash for abuse correlation only.
+export const agentChatLog = pgTable(
+  "mem_agent_chat_log",
+  {
+    id: pk(),
+    workspaceSlug: text("workspace_slug").notNull(),
+    org: text("org"),
+    sub: text("sub"), // null when anonymous
+    ipHash: text("ip_hash"), // sha-256(ip + salt), never the raw IP
+    question: text("question").notNull(),
+    reply: text("reply"), // the agent's full answer
+    hits: integer("hits"), // total search_kb results found across the turn
+    searches: integer("searches"), // number of search_kb calls
+    steps: integer("steps"),
+    tokens: integer("tokens"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("mem_agent_chat_log_ws").on(t.workspaceSlug, t.createdAt)],
+);
+
 // ── User preferences: default KB (Supabase sub → workspace) ───────────────────
 export const userPrefs = pgTable("mem_user_prefs", {
   userId: text("user_id").primaryKey(), // Supabase auth user id (claim `sub`)
