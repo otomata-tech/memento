@@ -70,10 +70,16 @@
     }
     return html;
   }
+  // The text reaching inline() is already HTML-escaped by esc() (& < > → entities).
+  // For URLs we still neutralise quotes (esc doesn't touch them) so a crafted link
+  // can't break out of the href="…" attribute, and we validate the scheme.
+  function escAttr(s) { return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
   function inline(s) {
-    // links [text](url) — only http(s), opened in a new tab
-    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function (_m, t, u) {
-      return '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + t + "</a>";
+    // links [text](url) — http(s) only; URL class excludes attribute-breaking chars
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s"'<>)]+)\)/g, function (_m, t, u) {
+      try { var p = new URL(u); if (p.protocol !== "http:" && p.protocol !== "https:") return _m; }
+      catch (_e) { return _m; }
+      return '<a href="' + escAttr(u) + '" target="_blank" rel="noopener noreferrer">' + t + "</a>";
     });
     s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");

@@ -53,13 +53,15 @@ const TOOLS = [{
 
 type PublicRef = { id: string; slug: string; org: string | null };
 
-/** Lexical search scoped to ONE public KB. Lexical only: deterministic, with no
- *  embedding cost on an anonymous surface (same choice as public search). */
+/** Search scoped to ONE public KB. HYBRID (lexical + semantic): a FAQ/agent surface
+ *  is paraphrase-heavy by nature ("à quoi sert oto ?" must hit "Qu'est-ce qu'oto ?"),
+ *  and pure lexical misses those (0 hit). The semantic leg costs one query embedding
+ *  per search — negligible next to the Mistral turn, and bounded by the rate limits. */
 async function searchKb(ws: PublicRef, q: string): Promise<unknown> {
   const res = await hybridSearch({
     workspaces: [{ id: ws.id, slug: ws.slug, org: ws.org ?? "?" }],
     q,
-    mode: "lexical",
+    mode: "hybrid",
     maxHits: 8,
   });
   const hits = (res.hits ?? []).map((h) => ({
@@ -83,11 +85,29 @@ async function resolveKb(slug: string, sub: string): Promise<PublicRef | null> {
   return null;
 }
 
+/** Renders the doctrine's section tree as a compact map (titles + summaries +
+ *  block counts), so the agent is doctrine-first: it knows the base's structure
+ *  and routes its search to the right section instead of guessing blindly. */
+type DoctrineNode = { title: string; summary?: string | null; blockCount?: number; children?: DoctrineNode[] };
+function renderTree(nodes: DoctrineNode[], depth = 0): string {
+  return (nodes ?? []).map((n) => {
+    const indent = "  ".repeat(depth);
+    const sum = n.summary ? ` — ${n.summary}` : "";
+    const count = n.blockCount ? ` (${n.blockCount})` : "";
+    const kids = n.children?.length ? "\n" + renderTree(n.children, depth + 1) : "";
+    return `${indent}- ${n.title}${count}${sum}${kids}`;
+  }).join("\n");
+}
+
 function buildSystemPrompt(doctrine: Awaited<ReturnType<typeof getDoctrine>>): string {
   const ws = doctrine.workspace;
+  const map = doctrine.tree?.length
+    ? `\nMap of this base (sections, with block counts) — use it to route your searches:\n${renderTree(doctrine.tree as DoctrineNode[])}\n`
+    : "";
   return [
     `You are the assistant of the knowledge base "${ws.name}"${ws.summary ? ` — ${ws.summary}` : ""}.`,
     doctrine.preamble ? `\n${doctrine.preamble}\n` : "",
+    map,
     "Mandatory rules:",
     "- Answer ONLY from the content of this base, found via the search_kb tool. Call it before answering.",
     "- If the information is not in the base, say so plainly and never make anything up.",
