@@ -11,7 +11,7 @@
  *   - otherwise → JSON { reply, steps }.
  * Once deployed, the "agent" function answers on /agent/*. Locally: deno run -A .../agent/index.ts
  */
-import { corsHeaders, jsonRes } from "../_shared/http.ts";
+import { jsonRes } from "../_shared/http.ts";
 import { getDoctrine } from "../_shared/workspaces.ts";
 import { hybridSearch } from "../_shared/search.ts";
 import { accessibleWorkspaceIds, publicWorkspaceRefs } from "../_shared/access.ts";
@@ -261,8 +261,22 @@ function clientIp(req: Request): string {
     || "unknown";
 }
 
+/** CORS for the agent surface. Unlike /api (allowlist), the agent is meant to be
+ *  called from an EMBEDDABLE widget dropped on ANY site (oto.ninja, dashboards,
+ *  partner pages…). It's anonymous and rate-limited (per-IP + global daily budget),
+ *  and uses no cookies (the optional Bearer is sent in a header), so we reflect any
+ *  origin rather than maintain an allowlist. */
+function widgetCors(origin: string | null): Record<string, string> {
+  return {
+    "access-control-allow-origin": origin || "*",
+    "access-control-allow-headers": "content-type, authorization",
+    "access-control-allow-methods": "POST, OPTIONS",
+    "vary": "Origin",
+  };
+}
+
 Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req) => {
-  const cors = corsHeaders(req.headers.get("origin"));
+  const cors = widgetCors(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const url = new URL(req.url);
   const path = url.pathname.replace(/^\/agent/, "") || "/";
