@@ -158,7 +158,18 @@ function guarded(fn: (args: any) => Promise<any>) {
 
 /** Builds a fresh MCP server (one per request in stateless mode), scoped to user `sub`. */
 function buildServer(sub: string): McpServer {
-  const server = new McpServer({ name: "memento", version: "0.1.0" }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({
+    name: "memento",
+    title: "Memento",
+    version: "0.1.0",
+    websiteUrl: "https://me.mento.cc",
+    // claude.ai lit l'icône du connecteur dans serverInfo.icons (handshake
+    // initialize), PAS le favicon.ico du domaine. Sans ça → glyphe générique (livre).
+    icons: [
+      { src: "https://me.mento.cc/favicon.svg", mimeType: "image/svg+xml" },
+      { src: "https://me.mento.cc/android-chrome-512x512.png", mimeType: "image/png", sizes: ["512x512"] },
+    ],
+  }, { instructions: INSTRUCTIONS });
 
   // Call log (otomata-calllog, tool_calls table): registerTool is
   // intercepted ONCE — every verb goes through withCallLog without touching
