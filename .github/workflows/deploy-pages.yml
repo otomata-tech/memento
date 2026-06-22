@@ -27,6 +27,9 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # PostHog Project API Key (phc_) is publishable (write-only ingestion) → safe inline.
+          VITE_POSTHOG_KEY: phc_wYEankhdv3AnCE7JEMeiiidt6yssKXRnkAn36TpFdesC
+          VITE_POSTHOG_HOST: https://eu.i.posthog.com
         run: |
           npm ci
           npm run build
