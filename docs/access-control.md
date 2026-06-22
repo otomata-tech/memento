@@ -48,13 +48,13 @@ Ranks in `supabase/functions/_shared/access.ts` (`ROLE_RANK`); write = rank ≥ 
 
 ## Sharing: the perimeter is set on the KB (by the org-admin)
 
-UI gesture: **Share** button in the viewer toolbar (org-admins) or `/org/:slug/bases` → "share" — `SharePanel.vue` component (perimeter + unified "who has access" grants/inherited + invitation). Agent verb: `mem_grant`/`mem_grants`/`mem_set_visibility`.
+UI gesture: **Share** button in the viewer toolbar (org-admins) or `/org/:slug/bases` → "share" — `SharePanel.vue` component (perimeter + unified "who has access" grants/inherited + invitation). Agent verbs: `mem_grants` (op list|grant|revoke) / `mem_workspace_admin` (op set_visibility).
 
 - **The whole team**: `visibility=org` (default) — org members access with their org role (`inherited` in `mem_grants`).
 - **Subset / personal within the team**: `visibility=private` + grants.
-- **External (guest)**: `mem_grant({workspace, email, role: member|curator})` — account provisioned + invitation email (same GoTrue flow as org members, grant landing). They see the KB under "Shared with me" (org menu + `shared` from `mem_workspaces`), without joining the org.
-- **Open to all (public)**: `visibility=public` (`mem_set_visibility` or the "Public" option of the SharePanel) — read/search by anyone, no account (gallery `/public` + `mem_public_search`). Reserved for the org-admin (governance). Writing stays with the org/curators.
-- **Change tenant** (promote a personal KB → team, hand back to the client): `mem_transfer_workspace` — admin of both orgs. The perimeter (visibility/grants) follows the KB.
+- **External (guest)**: `mem_grants({op:"grant", workspace, email, role: member|curator})` — account provisioned + invitation email (same GoTrue flow as org members, grant landing). They see the KB under "Shared with me" (org menu + `shared` from `mem_workspaces`), without joining the org.
+- **Open to all (public)**: `visibility=public` (`mem_workspace_admin({op:"set_visibility", visibility:"public"})` or the "Public" option of the SharePanel) — read/search by anyone, no account (gallery `/public` + `mem_public_search`). Reserved for the org-admin (governance). Writing stays with the org/curators.
+- **Change tenant** (promote a personal KB → team, hand back to the client): `mem_workspace_admin({op:"transfer", workspace, toOrg})` — admin of both orgs. The perimeter (visibility/grants) follows the KB.
 
 ## Admin CLI — `npm run admin`
 

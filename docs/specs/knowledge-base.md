@@ -344,12 +344,13 @@ e.g. `example-kb/strategie/creativite`). Responses return the KB used.
 mem_workspaces()   // CONTEXT MAP: orgs (your role) → KB, + default KB (`default`)
 mem_use_workspace({ workspace })       // sets the default KB (persisted per user)
 mem_orgs()                             // the caller's orgs: role, members, KB — to choose where to create
-mem_create_org({ name, slug? })        // creates a sharing perimeter; the creator becomes admin
+mem_org({ op, name?, slug?, org? })    // op = create (name) | update (org slug, name?/slug?); creator becomes admin
 mem_create_workspace({ org, name, summary?, slug? })  // org-admin; slug derived from the name if omitted
-mem_transfer_workspace({ workspace, toOrg })          // admin of BOTH orgs; changes the sharing perimeter
 mem_set_doctrine({ workspace?, preamble })            // writes the preamble (MemSetting "doctrine.preamble")
-mem_update_workspace({ workspace?, name?, summary? }) // metadata; the slug stays stable
-mem_archive_workspace({ workspace?, archived? })      // org-admin; reversible (archived:false)
+mem_workspace_admin({ op, workspace?, name?, summary?, archived?, visibility?, toOrg? })
+//   op = update (name?/summary?) | archive (archived?) | delete (workspace REQUIRED, archive first)
+//      | set_visibility (org|private|public) | transfer (workspace REQUIRED, toOrg; admin of BOTH orgs)
+mem_grants({ op, workspace?, email?, role?, userId? })  // op = list (default) | grant (email, role?) | revoke (userId)
 ```
 
 ### 5.1 Entry & reading (the server never returns an unrequested wall of text)

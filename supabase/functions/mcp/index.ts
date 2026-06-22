@@ -70,7 +70,7 @@ each also has their personal org); a **KB** (workspace) = a body of knowledge be
 to ONE org, which CARRIES ITS SCOPE: visibility "org" (all org members, their
 default org role), "private" (explicit accesses only) or "public" (readable/searchable
 by everyone, the org keeps curation), plus per-KB individual **grants** (promote a member
-to curator, invite an external party — mem_grant; a grant gives read or write, NEVER
+to curator, invite an external party — mem_grants; a grant gives read or write, NEVER
 governance). Your effective role on a KB = max(grant, org role if visibility=org|public);
 curator+ = write, member = read. Governance (share, visibility, archive,
 transfer) = admin of the owning ORG only. myRole null = a KB of your org that is manageable
@@ -233,80 +233,84 @@ function buildServer(sub: string): McpServer {
     return json({ workspace: ws, org, ...(await setDoctrine({ workspace: ws, preamble: args.preamble }, sub)) });
   }));
 
-  server.registerTool("mem_update_workspace", {
-    description: "Edits a KB's metadata (name and/or summary). The slug stays stable. Admin/curator only.",
-    inputSchema: { workspace: z.string().optional(), name: z.string().optional(), summary: z.string().optional() },
+  // ── Workspace lifecycle/governance (op-based) ────────────────────────────────────
+  server.registerTool("mem_workspace_admin", {
+    description:
+      "Governs a KB — one verb, `op` selects the action: " +
+      "`update` (workspace?, name?, summary? — metadata, slug stays stable; admin/curator) · " +
+      "`archive` (workspace?, archived? — hide a KB or reactivate it with archived:false, reversible; org-admin) · " +
+      "`delete` (workspace REQUIRED — HARD-deletes the KB and ALL its content, irreversible; the KB must be archived FIRST: archive = reversible step 1, delete = step 2; org-admin) · " +
+      "`set_visibility` (workspace?, visibility = org|private|public; org-admin) · " +
+      "`transfer` (workspace REQUIRED, toOrg = change tenant, scope follows, content stays; admin of BOTH orgs). " +
+      "`workspace` omitted = default KB except for delete/transfer (explicit, to avoid touching the wrong KB).",
+    inputSchema: {
+      op: z.enum(["update", "archive", "delete", "set_visibility", "transfer"]),
+      workspace: z.string().optional(),
+      name: z.string().optional(),
+      summary: z.string().optional(),
+      archived: z.boolean().optional(),
+      visibility: z.enum(["org", "private", "public"]).optional(),
+      toOrg: z.string().optional(),
+    },
   }, guarded(async (args) => {
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    await assertAccess(sub, { workspace: ws }, { write: true });
-    return json({ workspace: ws, org, ...(await updateWorkspace({ workspace: ws, name: args.name, summary: args.summary }, sub)) });
+    const need = (v: unknown, field: string) => {
+      if (v === undefined || v === null) throw new Error(`op '${args.op}' requires \`${field}\``);
+    };
+    switch (args.op) {
+      case "update": {
+        const { workspace: ws, org } = await wsContext(sub, args.workspace);
+        await assertAccess(sub, { workspace: ws }, { write: true });
+        return json({ workspace: ws, org, ...(await updateWorkspace({ workspace: ws, name: args.name, summary: args.summary }, sub)) });
+      }
+      case "archive": {
+        const { workspace: ws, org } = await wsContext(sub, args.workspace);
+        await assertWorkspaceAdmin(sub, ws);
+        return json({ workspace: ws, org, ...(await archiveWorkspace({ workspace: ws, archived: args.archived }, sub)) });
+      }
+      case "delete": {
+        need(args.workspace, "workspace");
+        return json(await deleteWorkspace(sub, { workspace: args.workspace! }));
+      }
+      case "set_visibility": {
+        need(args.visibility, "visibility");
+        const { workspace: ws, org } = await wsContext(sub, args.workspace);
+        return json({ org, ...(await setVisibility(sub, { workspace: ws, visibility: args.visibility! })) });
+      }
+      case "transfer": {
+        need(args.workspace, "workspace");
+        need(args.toOrg, "toOrg");
+        return json(await transferWorkspace(sub, { workspace: args.workspace!, toOrg: args.toOrg! }));
+      }
+    }
+    throw new Error(`unknown op: ${args.op}`); // unreachable (z.enum), satisfies the type-checker
   }));
 
-  server.registerTool("mem_archive_workspace", {
-    description: "Archives (hides) a KB, or reactivates it (`archived:false`). Reversible. Reserved for admins of the owning org.",
-    inputSchema: { workspace: z.string().optional(), archived: z.boolean().optional() },
-  }, guarded(async (args) => {
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    await assertWorkspaceAdmin(sub, ws);
-    return json({ workspace: ws, org, ...(await archiveWorkspace({ workspace: ws, archived: args.archived }, sub)) });
-  }));
-
-  server.registerTool("mem_delete_workspace", {
-    description: "HARD-deletes a whole KB and ALL its content (documents, blocks, sections, revisions, ingestions — irreversible). The KB must be ARCHIVED first (mem_archive_workspace): archive = reversible step 1, delete = irreversible step 2. Org-admin only. `workspace` is required (no default, to avoid deleting the wrong KB).",
-    inputSchema: { workspace: z.string() },
-  }, guarded(async (args) => json(await deleteWorkspace(sub, { workspace: args.workspace }))));
-
+  // ── KB access grants (op-based) ──────────────────────────────────────────────────
   server.registerTool("mem_grants", {
     description:
-      "A KB's \"who has access\": visibility (org|private), individual grants (email, role, pending) " +
-      "AND accesses inherited from the org (`inherited`, if visibility=org). Reserved for admins of the owning org.",
-    inputSchema: { workspace: z.string().optional().describe("KB slug; omitted = default KB") },
+      "A KB's access — one verb, `op` selects the action (default `list`): " +
+      "`list` (workspace? — visibility + individual grants (email, role, pending) + accesses inherited from the org) · " +
+      "`grant` (workspace?, email, role? = member|curator — grants/updates ONE person's access, incl. someone EXTERNAL: nonexistent account → provisioned + invitation email; never governance) · " +
+      "`revoke` (workspace?, userId — removes an explicit access, cf. list). " +
+      "Reserved for admins of the owning org. To add someone to ALL of an org's KB → org invitation (mem_orgs).",
+    inputSchema: {
+      op: z.enum(["list", "grant", "revoke"]).optional().describe("default list"),
+      workspace: z.string().optional().describe("KB slug; omitted = default KB"),
+      email: z.string().optional().describe("grant: the person's email"),
+      role: z.enum(["curator", "member"]).optional().describe("grant: default member (read)"),
+      userId: z.string().optional().describe("revoke: the user's sub (cf. list)"),
+    },
   }, guarded(async (args) => {
-    const { workspace: ws } = await wsContext(sub, args.workspace);
+    const { workspace: ws, org } = await wsContext(sub, args.workspace);
+    if (args.op === "grant") {
+      if (!args.email) throw new Error("op 'grant' requires `email`");
+      return json({ org, ...(await grantAccess(sub, { workspace: ws, email: args.email, role: args.role })) });
+    }
+    if (args.op === "revoke") {
+      if (!args.userId) throw new Error("op 'revoke' requires `userId`");
+      return json({ org, ...(await revokeGrant(sub, { workspace: ws, userId: args.userId })) });
+    }
     return json(await listGrants(sub, { workspace: ws }));
-  }));
-
-  server.registerTool("mem_grant", {
-    description:
-      "Grants (or updates) a person's access to ONE KB, by email — including someone EXTERNAL to the org (guest): " +
-      "nonexistent account → provisioned + invitation email. Role: member (read) | curator (write) — " +
-      "never governance (share/transfer stay with the org-admin). Reserved for admins of the owning org. " +
-      "To add someone to ALL of an org's KB → org invitation (mem_orgs).",
-    inputSchema: {
-      workspace: z.string().optional().describe("KB slug; omitted = default KB"),
-      email: z.string().describe("the person's email"),
-      role: z.enum(["curator", "member"]).optional().describe("default member (read)"),
-    },
-  }, guarded(async (args) => {
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    return json({ org, ...(await grantAccess(sub, { workspace: ws, email: args.email, role: args.role })) });
-  }));
-
-  server.registerTool("mem_revoke_grant", {
-    description:
-      "Removes an explicit access to a KB (by userId, cf. mem_grants). Reserved for admins of the owning org.",
-    inputSchema: {
-      workspace: z.string().optional().describe("KB slug; omitted = default KB"),
-      userId: z.string().describe("the user's sub (cf. mem_grants)"),
-    },
-  }, guarded(async (args) => {
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    return json({ org, ...(await revokeGrant(sub, { workspace: ws, userId: args.userId })) });
-  }));
-
-  server.registerTool("mem_set_visibility", {
-    description:
-      "Changes a KB's scope: `org` (all org members, default org role), `private` " +
-      "(explicit grants only — a curator grant is set for you along the way so you keep reading it), " +
-      "or `public` (readable and searchable by EVERYONE, anonymous included: public gallery + mem_public_search; " +
-      "your org keeps write). Reserved for admins of the owning org.",
-    inputSchema: {
-      workspace: z.string().optional().describe("KB slug; omitted = default KB"),
-      visibility: z.enum(["org", "private", "public"]),
-    },
-  }, guarded(async (args) => {
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    return json({ org, ...(await setVisibility(sub, { workspace: ws, visibility: args.visibility })) });
   }));
 
   server.registerTool("mem_orgs", {
@@ -324,33 +328,33 @@ function buildServer(sub: string): McpServer {
     inputSchema: {},
   }, guarded(async () => json(await listAccounts(sub))));
 
-  server.registerTool("mem_create_org", {
+  // ── Org create/rename (op-based) ─────────────────────────────────────────────────
+  server.registerTool("mem_org", {
     description:
-      "Creates an organization = a sharing scope (mission/client, personal); you become its admin. " +
-      "Chain with mem_create_workspace({org}) to create KB in it. Slug derived from the name unless provided.",
+      "Manages an organization (a sharing scope) — one verb, `op` selects the action: " +
+      "`create` (name, slug? = derived from name — creates an org, you become its admin; chain mem_create_workspace({org}) to add KB) · " +
+      "`update` (org = slug to rename, name? and/or slug? — slug must stay globally unique, collision errors; a personal org's slug is locked). " +
+      "To list orgs + members use mem_orgs.",
     inputSchema: {
-      name: z.string().describe("human-readable name, e.g. Demo KB"),
-      slug: z.string().optional().describe("desired slug; default = derived from the name"),
+      op: z.enum(["create", "update"]),
+      org: z.string().optional().describe("update: slug of the org to rename"),
+      name: z.string().optional().describe("create: name (required) · update: new display name"),
+      slug: z.string().optional().describe("desired/new slug (globally unique)"),
     },
-  }, guarded(async (args) => json(await createOrg(sub, args))));
-
-  server.registerTool("mem_update_org", {
-    description:
-      "Renames an org you administer: change its display `name` and/or its `slug` " +
-      "(the stable handle used by orgSlug-addressed verbs). Slug must stay globally unique — " +
-      "a collision errors (no silent suffixing). A personal org's slug is locked.",
-    inputSchema: {
-      org: z.string().describe("slug of the org to rename"),
-      name: z.string().optional().describe("new display name"),
-      slug: z.string().optional().describe("new slug (globally unique)"),
-    },
-  }, guarded(async (args) => json(await updateOrg(sub, { orgSlug: args.org, name: args.name, slug: args.slug }))));
+  }, guarded(async (args) => {
+    if (args.op === "create") {
+      if (!args.name) throw new Error("op 'create' requires `name`");
+      return json(await createOrg(sub, { name: args.name, slug: args.slug }));
+    }
+    if (!args.org) throw new Error("op 'update' requires `org`");
+    return json(await updateOrg(sub, { orgSlug: args.org, name: args.name, slug: args.slug }));
+  }));
 
   server.registerTool("mem_create_workspace", {
     description:
       "Creates an empty KB (workspace) attached to an org you're an admin of (your personal org always works). " +
-      "`visibility`: org (default, all org members), private (you only, then mem_grant), " +
-      "or public (readable/searchable by everyone — better to switch afterward via mem_set_visibility). " +
+      "`visibility`: org (default, all org members), private (you only, then mem_grants), " +
+      "or public (readable/searchable by everyone — better to switch afterward via mem_workspace_admin op set_visibility). " +
       "The slug is derived from the name (unique across all orgs) unless provided. " +
       "Chain with mem_set_doctrine to set the compass, otherwise the map is empty.",
     inputSchema: {
@@ -365,18 +369,6 @@ function buildServer(sub: string): McpServer {
       orgSlug: args.org, name: args.name, summary: args.summary, slug: args.slug, visibility: args.visibility,
     })),
   ));
-
-  server.registerTool("mem_transfer_workspace", {
-    description:
-      "Transfers a KB to another org = changes TENANT (e.g. promote a KB from your personal org to " +
-      "the team org). The scope (visibility/grants) follows the KB; the content does not move. To adjust " +
-      "WHO sees the KB without changing org → mem_grant/mem_set_visibility. " +
-      "Reserved for admins of BOTH orgs (source and destination).",
-    inputSchema: {
-      workspace: z.string().describe("slug of the KB to transfer"),
-      toOrg: z.string().describe("slug of the destination org"),
-    },
-  }, guarded(async (args) => json(await transferWorkspace(sub, args))));
 
   server.registerTool("mem_doctrine", {
     description:
