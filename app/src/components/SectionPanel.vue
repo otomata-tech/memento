@@ -139,27 +139,30 @@ async function doDelete() {
     </div>
 
     <template v-if="section.subsections.length">
-      <div class="eb" style="margin-top:18px">Sub-sections</div>
-      <div v-for="s in section.subsections" :key="s.id" class="block role-mute" @click="emit('selectSection', s.id)">
-        <div class="bmeta"><span class="badge">▸</span><b>{{ s.title }}</b></div>
-        <div v-if="s.summary" class="bbody"><div class="btext muted">{{ s.summary }}</div></div>
+      <div class="eb" style="margin-top:22px">Sub-sections</div>
+      <div v-for="s in section.subsections" :key="s.id" class="sub-card" @click="emit('selectSection', s.id)">
+        <div class="card-title">▸ {{ s.title }}</div>
+        <div v-if="s.summary" class="card-summary">{{ s.summary }}</div>
       </div>
     </template>
 
-    <div class="eb" style="margin-top:18px">Documents</div>
-    <div v-for="d in section.documents" :key="d.id" class="block role-mute"
-      :class="{ dep: d.status === 'DEPRECATED' }" @click="emit('openDoc', d.id)">
-      <div class="bmeta">
-        <b>{{ d.title }}</b>
-        <span v-if="d.status === 'DEPRECATED'" class="badge depbadge">deprecated</span>
-        <span class="gx">{{ d.blockCount }} block(s)</span>
+    <div class="eb" style="margin-top:22px">Documents</div>
+    <div v-for="d in section.documents" :key="d.id" class="doc-card" :class="{ dep: d.status === 'DEPRECATED' }">
+      <div class="doc-open" @click="emit('openDoc', d.id)">
+        <div class="card-title">
+          {{ d.title }}
+          <span v-if="d.status === 'DEPRECATED'" class="badge depbadge">deprecated</span>
+        </div>
+        <div v-if="d.summary" class="card-summary">{{ d.summary }}</div>
+        <div class="card-count">{{ d.blockCount }} block(s)</div>
+      </div>
+      <div class="doc-actions">
         <button class="btn mini" :disabled="busy" @click.stop="toggleStatus(d)">
           {{ d.status === 'DEPRECATED' ? '↺ restore' : '⊘ deprecate' }}
         </button>
-        <button class="btn mini" :disabled="busy" title="Move to another section / KB" @click.stop="mover = { mode: 'doc', id: d.id, title: d.title }">⇄</button>
-        <button class="btn mini del" :disabled="busy" title="Delete permanently" @click.stop="askDeleteDoc(d)">🗑</button>
+        <button class="btn mini" :disabled="busy" @click.stop="mover = { mode: 'doc', id: d.id, title: d.title }">⇄ move</button>
+        <button class="btn mini del" :disabled="busy" @click.stop="askDeleteDoc(d)">🗑 delete</button>
       </div>
-      <div v-if="d.summary" class="bbody"><div class="btext muted">{{ d.summary }}</div></div>
     </div>
     <p v-if="!section.documents.length && !section.subsections.length" class="muted">Empty section — no documents yet.</p>
 
@@ -172,14 +175,21 @@ async function doDelete() {
 </template>
 
 <style scoped>
-.sect-act { margin-top: 14px; }
+.sect-act { margin-top: 14px; flex-wrap: wrap; }
 .sect-form { margin-top: 10px; }
-.block.role-mute { cursor: pointer; }
-.block.dep { opacity: .55; }
-.bmeta { display: flex; gap: 8px; align-items: center; }
-.badge.depbadge { background: var(--color-weak-ink, #b04); color: var(--color-surface, #fff); }
-.btn.mini { font-size: 11px; padding: 3px 8px; }
-.btn.mini:first-of-type { margin-left: auto; }
-.btn.del { color: var(--color-weak-ink, #b04); border-color: var(--color-weak-ink, #b04); }
 .sec-slug { font-family: var(--font-mono); text-transform: none; letter-spacing: 0; opacity: .65; }
+
+/* Section-page cards — own layout (clickable body + actions row), generous spacing */
+.sub-card, .doc-card { border: 1px solid var(--color-hair); background: var(--color-surface); padding: 13px 15px; margin-top: 10px; }
+.sub-card { cursor: pointer; }
+.sub-card:hover, .doc-open:hover { background: var(--color-paper-2, var(--color-bg)); }
+.doc-card.dep { opacity: .6; }
+.doc-open { cursor: pointer; }
+.card-title { font-weight: 600; font-size: 14px; line-height: 1.4; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; overflow-wrap: anywhere; }
+.card-summary { font-size: 12.5px; color: var(--color-mute, var(--color-weak-ink)); margin-top: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+.card-count { font-family: var(--font-mono); font-size: 11px; opacity: .6; margin-top: 7px; }
+.doc-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--color-hair); }
+.badge.depbadge { background: var(--color-weak-ink, #b04); color: var(--color-surface, #fff); text-transform: none; }
+.btn.mini { font-size: 11.5px; padding: 4px 10px; }
+.btn.del { color: var(--color-weak-ink, #b04); border-color: var(--color-weak-ink, #b04); }
 </style>

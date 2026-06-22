@@ -48,3 +48,11 @@ const mark = () => trustMark(props.block);
     </div>
   </div>
 </template>
+
+<style scoped>
+/* Long unbroken strings (gsheets URLs, slugs…) must wrap, not overflow the column. */
+.btext { overflow-wrap: anywhere; }
+.btext :deep(a) { overflow-wrap: anywhere; word-break: break-word; }
+.btext :deep(pre) { overflow-x: auto; max-width: 100%; }
+.src, .src a { overflow-wrap: anywhere; word-break: break-word; }
+</style>

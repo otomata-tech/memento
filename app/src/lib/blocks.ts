@@ -33,7 +33,9 @@ export function trustMark(b: Pick<Block, "verifiedAt" | "sources">): [string, st
 
 /** Sanitized markdown rendering (scraped content → untrusted). Identical to DocumentPane. */
 export function renderMd(md: string): string {
-  return DOMPurify.sanitize(marked.parse(md ?? "", { async: false }) as string);
+  // `breaks: true` → a single newline renders as <br> (GFM-style), what authors expect;
+  // otherwise a numbered list written line-by-line collapses onto one line.
+  return DOMPurify.sanitize(marked.parse(md ?? "", { async: false, breaks: true }) as string);
 }
 
 /** Only allows safe schemes for a source href. */
