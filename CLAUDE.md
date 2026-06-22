@@ -55,6 +55,8 @@ cd supabase/functions && deno test --allow-env --allow-net --allow-read _shared/
 - A block carries one sourceable claim; if it needs two, split it.
 - Write verbs mutate the row **then** call `revise()` to log a `MemRevision` — **not atomic**. `revise()` backstops a missing `reason` (the column is `NOT NULL`), but any *other* failure after the mutation leaves the data changed while the op is reported "errored". Wrap mutation+revise in a transaction if you touch this path.
 - `deno check` can't fully type-check `mcp/index.ts` locally (the MCP SDK's `.d.ts` is missing from Deno's cache) — check `_shared`/`api` locally, and rely on the deploy step's bundle type-check for `mcp`.
+- **Viewer layout**: `AppShell` (`.ed`) is `height:100%; overflow:hidden` — a page's scrollable body MUST be wrapped in `<div class="scroll">` (`.ed .scroll` = flex:1/min-height:0/overflow-y:auto), otherwise tall content is clipped with no scrollbar. Card/chrome styles live **globally** in `app/src/assets/editorial.css` under `.ed *` (views mostly carry no scoped styles) → a component extracted from a view inherits them as long as it renders inside `AppShell` (e.g. `IngestionReview`, the propose-validate review card shared by `LoopView` + `InboxView`).
+- **Operational ids go in `payload`, never the descriptive `target` label** (the #1 staging footgun) — `add_document`→`payload.sectionId`, `add_block`→`documentId`, block ops→`id`, etc. (`TARGET` map in `_shared/ingestion.ts`). `add_document` also accepts a readable `payload.sectionPath`, resolved to `sectionId` at stage **and** apply (`resolvePathTargets` → `resolveSectionIdInWorkspace`, workspace-scoped).
 
 ## Edge Function secrets
 
