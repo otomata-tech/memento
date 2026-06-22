@@ -20,6 +20,7 @@ export const shell = reactive({
   inboxCount: 0,        // pending ingestions across ALL my KBs
   pending: 0,           // pending ingestions for `pendingWs`
   pendingWs: "",
+  realtimeTick: 0,      // bumped on a realtime "inbox changed" push → views refetch their lists
 });
 
 /** Auth identity (session + email). Call once at app start / on mount. */

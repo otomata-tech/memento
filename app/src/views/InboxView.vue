@@ -3,12 +3,12 @@
 // Acts in place: expand to preview the changes, then "Apply all" / "Reject" without
 // navigating. Contradictions are never applied by "Apply all" → "Review in detail"
 // (the per-KB loop) handles fine-grained selection, edits and contradictions.
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, type InboxItem, type IngestionDetail, type IngestionChange } from "../api";
 import AppShell from "../components/AppShell.vue";
 import { toast } from "../lib/toast";
-import { refreshLoop } from "../stores/shell";
+import { refreshLoop, shell } from "../stores/shell";
 
 const router = useRouter();
 const items = ref<InboxItem[]>([]);
@@ -74,6 +74,8 @@ async function reject(it: InboxItem) {
   finally { busy.value = null; }
 }
 function review(it: InboxItem) { router.push({ path: `/w/${it.workspace}/loop`, query: { ing: it.id } }); }
+// Live: a realtime "inbox changed" ping refetches the list.
+watch(() => shell.realtimeTick, load);
 load();
 </script>
 

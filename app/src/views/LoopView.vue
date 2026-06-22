@@ -7,7 +7,7 @@ import { api, type IngestionSummary, type IngestionDetail, type IngestionChange,
 import AppShell from "../components/AppShell.vue";
 import { renderMd } from "../lib/blocks";
 import { toast } from "../lib/toast";
-import { refreshLoop } from "../stores/shell";
+import { refreshLoop, shell } from "../stores/shell";
 
 const route = useRoute();
 const router = useRouter();
@@ -210,6 +210,8 @@ function msg(e: unknown): string {
 }
 
 watch(() => route.fullPath, loadAll, { immediate: true });
+// Live: a realtime "inbox changed" ping refreshes the queue + open ingestion.
+watch(() => shell.realtimeTick, () => { if (ws.value) refresh(); });
 </script>
 
 <template>
