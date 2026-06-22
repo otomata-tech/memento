@@ -123,7 +123,11 @@ onMounted(async () => {
   window.addEventListener("keydown", onKey);
 });
 onBeforeUnmount(() => { document.removeEventListener("click", onDocClick); window.removeEventListener("keydown", onKey); });
-watch(() => props.ws, () => loadPending());
+// Vue Router reuses the same view instance across routes that resolve to the same
+// component (e.g. /w/:ws/doc vs /w/:ws/section), so onMounted runs once. Re-sync the
+// chrome whenever the KB/org CONTEXT changes — not on every doc/block click — so the
+// menu, KB selector and badges never go stale after navigation.
+watch(() => [props.ws, props.org], () => { loadShell(); loadPending(); loadInbox(); });
 defineExpose({ reloadShell: loadShell });
 </script>
 
