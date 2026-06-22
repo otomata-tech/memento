@@ -422,18 +422,24 @@ mem_verify_block({ id, verified?, reason? })   // sets verifiedAt/By ; verified:
 
 ### 5.3 Restructuring (composite, atomic, `dryRun`)
 
-Named verbs = auditable intent ("split 3.2", not 4 micro-moves).
+Op-based verbs = auditable intent ("split 3.2", not 4 micro-moves), `op` selecting the action.
 Composites accept `dryRun: true` → return the before/after diff + impact, without mutating.
 
 ```ts
-mem_create_section({ workspace?, parentId?, title, summary?, position? })  // depth ≤ 3
-mem_rename_section({ id, title?, summary? })       // stable slug (paths don't break)
-mem_delete_section({ id, reason? })                // EMPTY section only
-mem_move_documents({ documentIds[], targetSectionId, dryRun? })
-mem_split_section({ id, newSectionTitle, documentIdsToMove[], dryRun? })   // the canonical case
-mem_merge_sections({ sourceIds[], targetId, dryRun? })
+// sections: one verb, op = create | rename | delete | split | merge
+mem_section_op({ op, workspace?, id?, parentId?, title?, summary?, slug?, position?,
+                 reason?, cascade?, newSectionTitle?, documentIdsToMove?[], sourceIds?[], targetId?, dryRun? })
+//   create → parentId? (root if absent), title, summary?, position?, workspace?   // depth ≤ 3
+//   rename → id, title?, summary?; slug stable unless `slug` passed (re-slugs → path CHANGES)
+//   delete → id, reason? (EMPTY section); cascade:true → HARD-delete the whole subtree
+//   split  → id, newSectionTitle, documentIdsToMove[]
+//   merge  → sourceIds[], targetId
+mem_move({ op, ... })                              // op = documents | section ; same-KB & cross-KB one path
+//   documents → documentIds[], targetSectionId, dryRun?
+//   section   → sectionId, targetWorkspace, targetParentId?, dryRun?
 mem_reorder({ parentId?, orderedChildIds[] })      // sections of a parent OR docs of a section
-mem_deprecate_document({ id, supersededBy?, reason })   // obsolescence (status → DEPRECATED)
+mem_document_op({ op, id, title?, summary?, reason? })   // op = update | delete (metadata / hard-delete)
+mem_deprecate_document({ id, supersededBy?, reason })   // obsolescence (status → DEPRECATED) — op of mem_stage_changes
 ```
 
 ### 5.4 Ingestion loop (proposed change-set → reviewed → applied)

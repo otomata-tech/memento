@@ -44,7 +44,7 @@ import { listAccounts } from "../_shared/platform.ts";
 // are still called by OPS at apply time; mcp only uses the comment ones now.
 import { addComment, resolveComment, updateDocument, deleteDocument } from "../_shared/write.ts";
 import {
-  createSection, renameSection, deleteSection, deleteSectionCascade, reorder, moveDocuments, splitSection, mergeSections,
+  createSection, renameSection, deleteSection, deleteSectionCascade, reorder, splitSection, mergeSections,
   moveDocumentsCrossWorkspace, moveSectionCrossWorkspace,
 } from "../_shared/restructure.ts";
 import { listRevisions } from "../_shared/revisions.ts";
@@ -601,33 +601,72 @@ function buildServer(sub: string): McpServer {
   }));
 
   // ── Restructuring (Batch 4) — composite, atomic, dry_run ────────────────────
-  server.registerTool("mem_create_section", {
-    description: "Creates a section (root if no `parentId`). Tree depth ≤ 3. `workspace` optional = default KB.",
+  // ── Structure: sections (op-based) ───────────────────────────────────────────────
+  server.registerTool("mem_section_op", {
+    description:
+      "Edits the section tree — one verb, `op` selects the action: " +
+      "`create` (parentId? = root if absent, title, summary?, position?, workspace?; depth ≤ 3) · " +
+      "`rename` (id, title? and/or summary?; slug stays stable unless you pass `slug`, which re-slugs → CHANGES the path) · " +
+      "`delete` (id, reason? — an EMPTY section; pass `cascade:true` to HARD-delete its whole subtree, sub-sections + documents, irreversible) · " +
+      "`split` (id, newSectionTitle, documentIdsToMove[] — new sibling section gets the moved docs) · " +
+      "`merge` (sourceIds[], targetId — moves the sources' documents into the target then deletes the sub-section-less sources). " +
+      "`split`/`merge` accept `dryRun:true` to preview. To move docs/sections elsewhere use mem_move; to reorder siblings use mem_reorder.",
     inputSchema: {
-      workspace: z.string().optional(), parentId: z.string().optional(),
-      title: z.string(), summary: z.string().optional(), position: z.number().int().optional(),
+      op: z.enum(["create", "rename", "delete", "split", "merge"]),
+      workspace: z.string().optional(),
+      id: z.string().optional(),
+      parentId: z.string().optional(),
+      title: z.string().optional(),
+      summary: z.string().optional(),
+      slug: z.string().optional(),
+      position: z.number().int().optional(),
+      reason: z.string().optional(),
+      cascade: z.boolean().optional(),
+      newSectionTitle: z.string().optional(),
+      documentIdsToMove: z.array(z.string()).max(MAX_BATCH).optional(),
+      sourceIds: z.array(z.string()).max(MAX_BATCH).optional(),
+      targetId: z.string().optional(),
+      dryRun: z.boolean().optional(),
     },
   }, guarded(async (args) => {
-    const { workspace: _w, ...rest } = args;
-    const { workspace: ws, org } = await wsContext(sub, args.workspace);
-    await assertAccess(sub, { workspace: ws }, { write: true });
-    return json({ workspace: ws, org, ...(await createSection({ ...rest, workspace: ws }, sub)) });
-  }));
-
-  server.registerTool("mem_rename_section", {
-    description: "Renames a section (title and/or summary). By default the slug stays stable (paths don't break); pass `slug` to deliberately re-slug it (slugified + deduped — CHANGES the path).",
-    inputSchema: { id: z.string(), title: z.string().optional(), summary: z.string().optional(), slug: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "section" }, { write: true });
-    return json(await renameSection(args, sub));
-  }));
-
-  server.registerTool("mem_delete_section", {
-    description: "Deletes an EMPTY section (no documents, no sub-sections). Otherwise, move/merge first.",
-    inputSchema: { id: z.string(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "section" }, { write: true });
-    return json(await deleteSection(args, sub));
+    const need = (v: unknown, field: string) => {
+      if (v === undefined || v === null) throw new Error(`op '${args.op}' requires \`${field}\``);
+    };
+    switch (args.op) {
+      case "create": {
+        need(args.title, "title");
+        const { workspace: ws, org } = await wsContext(sub, args.workspace);
+        await assertAccess(sub, { workspace: ws }, { write: true });
+        return json({ workspace: ws, org, ...(await createSection(
+          { workspace: ws, parentId: args.parentId, title: args.title!, summary: args.summary, position: args.position }, sub)) });
+      }
+      case "rename": {
+        need(args.id, "id");
+        await assertAccess(sub, { id: args.id!, kind: "section" }, { write: true });
+        return json(await renameSection({ id: args.id!, title: args.title, summary: args.summary, slug: args.slug }, sub));
+      }
+      case "delete": {
+        need(args.id, "id");
+        await assertAccess(sub, { id: args.id!, kind: "section" }, { write: true });
+        return json(args.cascade
+          ? await deleteSectionCascade({ id: args.id!, reason: args.reason }, sub)
+          : await deleteSection({ id: args.id!, reason: args.reason }, sub));
+      }
+      case "split": {
+        need(args.id, "id");
+        need(args.newSectionTitle, "newSectionTitle");
+        await assertAccess(sub, { id: args.id!, kind: "section" }, { write: true });
+        return json(await splitSection(
+          { id: args.id!, newSectionTitle: args.newSectionTitle!, documentIdsToMove: args.documentIdsToMove ?? [], dryRun: args.dryRun }, sub));
+      }
+      case "merge": {
+        need(args.sourceIds, "sourceIds");
+        need(args.targetId, "targetId");
+        await assertAccess(sub, { id: args.targetId!, kind: "section" }, { write: true });
+        return json(await mergeSections({ sourceIds: args.sourceIds!, targetId: args.targetId!, dryRun: args.dryRun }, sub));
+      }
+    }
+    throw new Error(`unknown op: ${args.op}`); // unreachable (z.enum), satisfies the type-checker
   }));
 
   server.registerTool("mem_reorder", {
@@ -639,70 +678,57 @@ function buildServer(sub: string): McpServer {
     return json(await reorder(args, sub));
   }));
 
-  server.registerTool("mem_move_documents", {
-    description: "Moves documents to a target section (slug dedup). `dryRun:true` to preview without mutating.",
-    inputSchema: { documentIds: z.array(z.string()).max(MAX_BATCH), targetSectionId: z.string(), dryRun: z.boolean().optional() },
+  // ── Move content (op-based; same-KB and cross-KB are one path) ───────────────────
+  server.registerTool("mem_move", {
+    description:
+      "Moves content — one verb, `op` selects what: " +
+      "`documents` (documentIds[], targetSectionId) — to ANY section, same KB or another KB/org; cross-workspace is handled transparently (slug re-deduped on arrival, revision logged on both sides when the KB differs) · " +
+      "`section` (sectionId, targetWorkspace, targetParentId? = else a root section of the target KB) — moves the whole subtree. " +
+      "Both accept `dryRun:true` to preview without mutating. To only change sibling order, use mem_reorder.",
+    inputSchema: {
+      op: z.enum(["documents", "section"]),
+      documentIds: z.array(z.string()).max(MAX_BATCH).optional(),
+      targetSectionId: z.string().optional(),
+      sectionId: z.string().optional(),
+      targetWorkspace: z.string().optional(),
+      targetParentId: z.string().optional(),
+      dryRun: z.boolean().optional(),
+    },
   }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.targetSectionId, kind: "section" }, { write: true });
-    return json(await moveDocuments(args, sub));
-  }));
-
-  server.registerTool("mem_split_section", {
-    description: "Splits a section: creates a new sibling section and moves `documentIdsToMove` into it. `dryRun:true` to preview.",
-    inputSchema: { id: z.string(), newSectionTitle: z.string(), documentIdsToMove: z.array(z.string()).max(MAX_BATCH), dryRun: z.boolean().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "section" }, { write: true });
-    return json(await splitSection(args, sub));
-  }));
-
-  server.registerTool("mem_merge_sections", {
-    description: "Merges sections (without sub-sections) into a target: moves their documents then deletes the source sections. `dryRun:true` to preview.",
-    inputSchema: { sourceIds: z.array(z.string()).max(MAX_BATCH), targetId: z.string(), dryRun: z.boolean().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.targetId, kind: "section" }, { write: true });
-    return json(await mergeSections(args, sub));
-  }));
-
-  server.registerTool("mem_move_documents_cross", {
-    description: "Moves documents to a target section that MAY be in another KB/org (cross-workspace). Logs a revision on both sides. `dryRun:true` to preview. For same-KB moves, prefer mem_move_documents.",
-    inputSchema: { documentIds: z.array(z.string()).max(MAX_BATCH), targetSectionId: z.string(), dryRun: z.boolean().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.targetSectionId, kind: "section" }, { write: true });
-    for (const id of args.documentIds) await assertAccess(sub, { id, kind: "document" }, { write: true });
-    return json(await moveDocumentsCrossWorkspace(args, sub));
-  }));
-
-  server.registerTool("mem_move_section_cross", {
-    description: "Moves a section subtree to another KB/org (cross-workspace), optionally under `targetParentId` (else a root section of the target KB). `dryRun:true` to preview.",
-    inputSchema: { sectionId: z.string(), targetWorkspace: z.string(), targetParentId: z.string().optional(), dryRun: z.boolean().optional() },
-  }, guarded(async (args) => {
+    if (args.op === "documents") {
+      if (!args.documentIds || !args.targetSectionId) throw new Error("op 'documents' requires `documentIds` and `targetSectionId`");
+      // Always the cross-workspace path: it is a strict superset of the same-KB move
+      // (it logs the entry revision only when the KB actually differs), so one code
+      // path serves both — the caller never has to pick intra vs cross.
+      await assertAccess(sub, { id: args.targetSectionId, kind: "section" }, { write: true });
+      for (const id of args.documentIds) await assertAccess(sub, { id, kind: "document" }, { write: true });
+      return json(await moveDocumentsCrossWorkspace(
+        { documentIds: args.documentIds, targetSectionId: args.targetSectionId, dryRun: args.dryRun }, sub));
+    }
+    if (!args.sectionId || !args.targetWorkspace) throw new Error("op 'section' requires `sectionId` and `targetWorkspace`");
     await assertAccess(sub, { id: args.sectionId, kind: "section" }, { write: true });
     await assertAccess(sub, { workspace: args.targetWorkspace }, { write: true });
-    return json(await moveSectionCrossWorkspace(args, sub));
+    return json(await moveSectionCrossWorkspace(
+      { sectionId: args.sectionId, targetWorkspace: args.targetWorkspace, targetParentId: args.targetParentId, dryRun: args.dryRun }, sub));
   }));
 
-  server.registerTool("mem_update_document", {
-    description: "Edits a document's `title` and/or `summary` (its metadata, NOT its blocks — for content use update_block). The slug stays stable so deep-links don't break. Use it to keep a doc's one-line summary in sync after its blocks have moved/changed.",
-    inputSchema: { id: z.string(), title: z.string().optional(), summary: z.string().optional(), reason: z.string().optional() },
+  server.registerTool("mem_document_op", {
+    description:
+      "Edits a document — one verb, `op` selects the action — NOT its blocks (for content use mem_stage_changes/update_block): " +
+      "`update` (id, title? and/or summary?; slug stays stable so deep-links don't break — keep a doc's one-line summary in sync after its blocks changed) · " +
+      "`delete` (id — HARD-deletes the document and all its blocks, irreversible; for reversible obsolescence prefer the deprecate_document op of mem_stage_changes). Both accept `reason?`.",
+    inputSchema: {
+      op: z.enum(["update", "delete"]),
+      id: z.string(),
+      title: z.string().optional(),
+      summary: z.string().optional(),
+      reason: z.string().optional(),
+    },
   }, guarded(async (args) => {
     await assertAccess(sub, { id: args.id, kind: "document" }, { write: true });
-    return json(await updateDocument(args, sub));
-  }));
-
-  server.registerTool("mem_delete_document", {
-    description: "HARD-deletes a document and all its blocks (irreversible — blocks, sources links and comments are purged). For reversible obsolescence, prefer deprecate_document.",
-    inputSchema: { id: z.string(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "document" }, { write: true });
-    return json(await deleteDocument(args, sub));
-  }));
-
-  server.registerTool("mem_delete_section_cascade", {
-    description: "HARD-deletes a section AND its whole subtree (sub-sections + documents). Irreversible. For an empty section, prefer mem_delete_section.",
-    inputSchema: { id: z.string(), reason: z.string().optional() },
-  }, guarded(async (args) => {
-    await assertAccess(sub, { id: args.id, kind: "section" }, { write: true });
-    return json(await deleteSectionCascade(args, sub));
+    return json(args.op === "update"
+      ? await updateDocument({ id: args.id, title: args.title, summary: args.summary, reason: args.reason }, sub)
+      : await deleteDocument({ id: args.id, reason: args.reason }, sub));
   }));
 
   server.registerTool("mem_revisions", {
