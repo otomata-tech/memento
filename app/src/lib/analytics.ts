@@ -84,6 +84,13 @@ export function denyConsent(): void {
 // the decision → the banner reappears; the effective opt state stays until the
 // next choice (grant/deny).
 export function reopenConsent(): void {
+  // Suspend capture while the banner is reopened: until the user re-decides,
+  // nothing is collected (the banner promises "nothing before you accept").
+  // Re-armed only if they re-grant (grantConsent → applyOptIn).
+  if (enabled) {
+    posthog.opt_out_capturing();
+    posthog.stopSessionRecording();
+  }
   if (typeof localStorage !== "undefined") localStorage.removeItem(CONSENT_KEY);
   consent.value = null;
 }
