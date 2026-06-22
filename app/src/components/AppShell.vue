@@ -45,6 +45,8 @@ const wsList = computed(() => currentOrg.value?.workspaces ?? []);
 // loadShell / loadPending / loadInbox now live in the store (../stores/shell).
 
 function go(path: string) { router.push(path); }
+/** Logo → app home: the current org's bases listing, else the landing. */
+function goHome() { router.push(currentOrg.value ? `/org/${currentOrg.value.slug}/bases` : "/"); }
 function switchWs(e: Event) { router.push(`/w/${(e.target as HTMLSelectElement).value}`); }
 /** Org switch: lands on its default base if inside, otherwise the first, otherwise its page. */
 function switchOrg(o: AdminOrg) {
@@ -112,7 +114,7 @@ defineExpose({ reloadShell: loadShell });
 <template>
   <div class="ed">
     <div class="top">
-      <div class="brand" @click="go('/')" title="Accueil">
+      <div class="brand" @click="goHome" title="Accueil">
         <svg class="brand-mark" viewBox="-64 -64 128 128" aria-hidden="true">
           <defs>
             <radialGradient id="mlogo" cx="38%" cy="32%" r="78%">
