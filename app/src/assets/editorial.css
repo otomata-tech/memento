@@ -99,15 +99,16 @@
 .ed .doc { overflow-y: auto; padding: 28px 34px; }
 .ed h1.title { font-family: var(--font-display); font-size: 27px; font-weight: 700; letter-spacing: -.02em; }
 .ed .summary { color: var(--color-ink-soft); margin: 3px 0 22px; }
-/* Bloc = marge de métadonnées (badge, id, confiance) à gauche · texte en colonne
-   de lecture à droite. Le texte reste premier plan, la méta devient marginalia. */
-.ed .block { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 0 18px;
-  border-left: 3px solid var(--color-hair); padding: 3px 0 3px 14px; margin: 0 0 24px; cursor: pointer; }
+/* Bloc = méta compacte (badge, id, confiance) en bandeau AU-DESSUS · texte de lecture
+   pleine largeur aligné sur le titre. (Ex-marge méta fixe à gauche : elle laissait un
+   grand vide vertical sur les blocs hauts et décalait le texte loin du titre.) */
+.ed .block { display: grid; grid-template-columns: 1fr; gap: 7px 0;
+  border-left: 3px solid var(--color-hair); padding: 4px 0 4px 16px; margin: 0 0 22px; cursor: pointer; }
 .ed .block.on { border-left-color: var(--color-primary); }
-.ed .block .bmeta { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding-top: 2px; min-width: 0; }
+.ed .block .bmeta { display: flex; flex-direction: row; align-items: center; flex-wrap: wrap; gap: 9px; padding-top: 0; min-width: 0; }
 .ed .block .bmeta .badge { white-space: normal; }
 .ed .block .gx { font-family: var(--font-mono); font-size: 11px; color: var(--color-faint); overflow-wrap: anywhere; }
-.ed .btext { font-size: 14.5px; line-height: 1.62; max-width: 70ch; }
+.ed .btext { font-size: 15px; line-height: 1.68; max-width: 74ch; }
 .ed .btext strong { color: var(--color-ink); font-weight: 600; }
 .ed .btext :where(p) { margin: .3em 0; }
 .ed .btext :where(ul, ol) { margin: .35em 0; padding-left: 1.35em; }
