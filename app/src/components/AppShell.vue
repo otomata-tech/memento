@@ -9,7 +9,7 @@ import { api, type AdminOrg } from "../api";
 import { supabase } from "../auth";
 import SharePanel from "./SharePanel.vue";
 
-const props = defineProps<{ page: "reader" | "graph" | "loop" | "org" | "comptes"; ws: string; org?: string }>();
+const props = defineProps<{ page: "reader" | "graph" | "loop" | "org" | "comptes" | "inbox"; ws: string; org?: string }>();
 const router = useRouter();
 
 const orgList = ref<AdminOrg[]>([]);
@@ -18,6 +18,7 @@ const pins = ref<{ slug: string; name: string }[]>([]); // pinned public KBs (my
 const platformAdmin = ref(false); // platform operator → "Accounts" entry in the org menu
 const favorite = ref<string | null>(null);
 const pending = ref(0);
+const inboxCount = ref(0); // pending ingestions across ALL the user's KBs (global)
 const q = ref("");
 const email = ref<string | null>(null);
 const menuOpen = ref(false);
@@ -58,6 +59,10 @@ async function loadPending() {
     const r = await api.ingestions(props.ws, "PROPOSED");
     pending.value = r.count;
   } catch { pending.value = 0; }
+}
+async function loadInbox() {
+  if (!authed.value) { inboxCount.value = 0; return; }
+  try { inboxCount.value = (await api.inbox()).count; } catch { inboxCount.value = 0; }
 }
 
 function go(path: string) { router.push(path); }
@@ -112,7 +117,7 @@ function onKey(e: KeyboardEvent) {
 
 onMounted(async () => {
   authed.value = !!(await supabase.auth.getSession()).data.session;
-  loadShell(); loadPending();
+  loadShell(); loadPending(); loadInbox();
   email.value = (await supabase.auth.getUser()).data.user?.email ?? null;
   document.addEventListener("click", onDocClick);
   window.addEventListener("keydown", onKey);
@@ -138,6 +143,10 @@ defineExpose({ reloadShell: loadShell });
         <button type="submit" class="k">⌘K</button>
       </form>
       <div class="topright">
+        <a v-if="authed" class="inbox-nav" :class="{ on: page === 'inbox' }" @click="go('/inbox')"
+          title="Pending changes across all your knowledge bases">
+          📥 Inbox <span v-if="inboxCount" class="pin">{{ inboxCount }}</span>
+        </a>
         <select v-if="ws && wsList.length > 1" class="ws-switch" :value="ws" @change="switchWs" title="Switch knowledge base (current org)">
           <option v-for="w in wsList" :key="w.slug" :value="w.slug">{{ w.name }}</option>
         </select>
@@ -225,6 +234,8 @@ defineExpose({ reloadShell: loadShell });
 </template>
 
 <style scoped>
+.inbox-nav { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--color-hair); background: none; color: var(--color-ink-soft); padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+.inbox-nav.on, .inbox-nav:hover { border-color: var(--color-ink); color: var(--color-ink); }
 .sharew { position: relative; }
 .share-btn {
   border: 1px solid var(--color-hair); background: none; color: var(--color-ink-soft);

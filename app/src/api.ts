@@ -71,6 +71,12 @@ export interface IngestionChange {
 }
 export interface IngestionCounts { total: number; applied: number; pending: number; errored: number; byClass: Record<string, number> }
 export interface IngestionSummary { id: string; title: string; status: string; sourceId: string | null; createdBy: string | null; createdAt: string; counts: IngestionCounts }
+export interface InboxItem {
+  id: string; url: string | null;
+  workspace: string; workspaceName: string; org: string | null; orgName: string | null;
+  title: string; status: string; sourceId: string | null;
+  createdBy: string | null; createdAt: string; counts: IngestionCounts;
+}
 export interface IngestionDetail extends IngestionSummary { summary: string; reviewNote: string | null; changes: IngestionChange[]; decidedBy: string | null; decidedAt: string | null }
 export interface ChangeEdit { id: string; payload: Record<string, unknown> }
 // /ingestion/apply returns per-op outcomes, not the full detail — so the UI can surface errors.
@@ -125,6 +131,7 @@ export const api = {
   ingestions: (workspace: string, status?: string) =>
     get<{ count: number; ingestions: IngestionSummary[] }>("/ingestions", { workspace, status }),
   ingestion: (id: string) => get<IngestionDetail>("/ingestion", { id }),
+  inbox: () => get<{ count: number; ingestions: InboxItem[] }>("/inbox"),
   // ── Curated writes (curator/admin) — REST mirror of the mem_* verbs ──
   verifyBlock: (id: string, verified = true, reason?: string) =>
     send<{ id: string; verifiedAt: string | null; verifiedBy: string | null }>(

@@ -13,8 +13,8 @@
  * Each change's state (applied/error) is persisted in the `proposal` jsonb: a PARTIAL
  * ingestion can be re-applied to process the remaining ops.
  */
-import { and, desc, eq, isNull, lt, notInArray, or } from "drizzle-orm";
-import { db, ingestions, workspaces } from "./db.ts";
+import { and, desc, eq, inArray, isNull, lt, notInArray, or } from "drizzle-orm";
+import { db, ingestions, workspaces, orgs } from "./db.ts";
 import { loopUrl } from "./urls.ts";
 import { resolveWorkspaceId } from "./access.ts";
 import { nearDuplicates } from "./semantic.ts";
@@ -217,6 +217,35 @@ export async function listIngestions(args: { workspace: string; status?: string 
       id: r.id, url: loopUrl(args.workspace, r.id),
       title: r.title, status: r.status, sourceId: r.sourceId,
       createdBy: r.createdBy, createdAt: r.createdAt, counts: counts((r.proposal as Change[]) ?? []),
+    })),
+  };
+}
+
+/**
+ * Cross-org / cross-KB inbox: every still-actionable ingestion across the given
+ * accessible workspaces, with org+KB context so the viewer can group and deep-link.
+ * `workspaceIds` is pre-filtered to what the caller can access (accessibleWorkspaceIds).
+ */
+export async function listInbox(
+  workspaceIds: string[],
+  statuses: string[] = ["PROPOSED", "PARTIAL", "CHANGES_REQUESTED"],
+) {
+  if (!workspaceIds.length) return { count: 0, ingestions: [] };
+  const rows = await db
+    .select({ ing: ingestions, wsSlug: workspaces.slug, wsName: workspaces.name, orgSlug: orgs.slug, orgName: orgs.name })
+    .from(ingestions)
+    .innerJoin(workspaces, eq(ingestions.workspaceId, workspaces.id))
+    .leftJoin(orgs, eq(workspaces.orgId, orgs.id))
+    .where(and(inArray(ingestions.workspaceId, workspaceIds), inArray(ingestions.status, statuses as any)))
+    .orderBy(desc(ingestions.createdAt));
+  return {
+    count: rows.length,
+    ingestions: rows.map((r) => ({
+      id: r.ing.id, url: loopUrl(r.wsSlug, r.ing.id),
+      workspace: r.wsSlug, workspaceName: r.wsName, org: r.orgSlug, orgName: r.orgName,
+      title: r.ing.title, status: r.ing.status, sourceId: r.ing.sourceId,
+      createdBy: r.ing.createdBy, createdAt: r.ing.createdAt,
+      counts: counts((r.ing.proposal as Change[]) ?? []),
     })),
   };
 }

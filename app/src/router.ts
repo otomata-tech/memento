@@ -33,8 +33,9 @@ const routes: RouteRecordRaw[] = [
   // Graph
   { path: "/w/:ws/graph", component: () => import("./views/GraphView.vue") },
   { path: "/w/:ws/graph/:blockId", component: () => import("./views/GraphView.vue") },
-  // Loop
+  // Loop (per-KB) + global cross-org/cross-KB inbox
   { path: "/w/:ws/loop", component: () => import("./views/LoopView.vue") },
+  { path: "/inbox", component: () => import("./views/InboxView.vue") },
   // Organizations — management per org (tabs), org switched from the bar
   { path: "/org/:org/:tab(bases|membres|reglages)", component: () => import("./views/OrgView.vue") },
   { path: "/org/:org", redirect: (to) => `/org/${to.params.org}/bases` },

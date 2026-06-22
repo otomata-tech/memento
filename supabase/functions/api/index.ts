@@ -12,7 +12,7 @@ import { searchBlocks, searchPublic } from "../_shared/search.ts";
 import { listRevisions } from "../_shared/revisions.ts";
 import { verifyBlock, attachSource, addComment, resolveComment, addDocument, deprecateDocument, restoreDocument, updateDocument, deleteDocument, updateBlock } from "../_shared/write.ts";
 import { createSection, renameSection, reorder, moveDocuments, deleteSectionCascade, moveDocumentsCrossWorkspace, moveSectionCrossWorkspace } from "../_shared/restructure.ts";
-import { getIngestion, listIngestions, applyIngestion, rejectIngestion, requestChanges } from "../_shared/ingestion.ts";
+import { getIngestion, listIngestions, listInbox, applyIngestion, rejectIngestion, requestChanges } from "../_shared/ingestion.ts";
 import {
   listMyOrgs, removeMember, inviteMember, createWorkspace, createOrg, updateOrg, deleteOrg, deleteWorkspace,
   resendInvite, inviteLinkFor, transferWorkspace, ensureDefaultWorkspace, ensureAccount,
@@ -141,6 +141,10 @@ async function route(path: string, q: URLSearchParams, sub: string): Promise<unk
       requireAuthenticated(sub);
       await assertAccess(sub, { id: q.get("id")!, kind: "ingestion" });
       return getIngestion(q.get("id")!);
+    case "/inbox":
+      // Cross-org/cross-KB: pending ingestions across every workspace the user can access.
+      requireAuthenticated(sub);
+      return listInbox(await accessibleWorkspaceIds(sub));
     case "/usage-logs":
       // Scoping in listUsageLogs: my logs, or a KB's logs if admin/curator.
       return listUsageLogs({
