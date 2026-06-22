@@ -94,7 +94,7 @@ GETTING STARTED (important — the server is stateless):
 doctrine-first PROTOCOL: on a targeted KB, mem_doctrine (preamble + tree + conventions)
 BEFORE any drill. Target 2-3 sections, then mem_section (unfold) / mem_document (a WHOLE
 document — all its blocks ordered, in ONE call) / mem_search (hybrid: exact words +
-paraphrases). A search hit carries its `docId` (and mem_block its `documentId`): to read
+paraphrases). A search hit carries its docId (and mem_block its documentId): to read
 the rest of that document, call mem_document(docId) — do NOT loop mem_block to reassemble a
 document block by block. mem_block is only for inspecting ONE isolated block. To READ/answer,
 never load the whole base (target). To WRITE, it's the opposite — see LOAD BEFORE WRITING.
