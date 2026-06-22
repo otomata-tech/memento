@@ -237,6 +237,7 @@ watch(() => route.fullPath, loadAll, { immediate: true });
           <div class="eb">Propose-validate review</div>
           <h2 class="rtitle">{{ detail.title }}</h2>
           <p class="rmeta">{{ detail.summary }} · {{ detail.counts.total }} change(s) classified. Nothing is applied on its own.</p>
+          <p v-if="actionable" class="rhint">Each change is <b>pre-ticked</b>. Untick the ones to skip, then click <b>“Apply”</b> at the bottom — the tick is a selection, not an action.</p>
           <p v-if="detail.status === 'CHANGES_REQUESTED'" class="reqbanner">
             ↩ Sent back to the agent — awaiting a new proposal (same clientKey).
             <template v-if="detail.reviewNote"><br><b>Review note:</b> {{ detail.reviewNote }}</template>
@@ -301,8 +302,9 @@ watch(() => route.fullPath, loadAll, { immediate: true });
               </div>
             </template>
             <div v-else class="act">
-              <button class="btn" :class="selected[c.id] ? 'go' : ''" @click="selected[c.id] = !selected[c.id]">
-                {{ selected[c.id] ? "✓ accepted" : "○ accept" }}
+              <button class="btn" :class="selected[c.id] ? 'go' : 'no'" @click="selected[c.id] = !selected[c.id]"
+                :title="selected[c.id] ? 'Included in Apply — click to exclude' : 'Excluded — click to include'">
+                {{ selected[c.id] ? "☑ will apply" : "☐ skipped" }}
               </button>
               <button v-if="editableOps.has(c.op) && !editing[c.id]" class="btn ghost" @click="startEdit(c)">✎ edit</button>
               <button class="btn ghost" :class="{ on: fbOpen[c.id] }" @click="fbOpen[c.id] = !fbOpen[c.id]">💬 comment</button>
@@ -310,7 +312,7 @@ watch(() => route.fullPath, loadAll, { immediate: true });
           </div>
 
           <div class="applybar" v-if="actionable">
-            <button class="btn primary" :disabled="busy || !acceptIds.length" @click="apply">Apply selection ({{ acceptIds.length }})</button>
+            <button class="btn primary" :disabled="busy || !acceptIds.length" @click="apply">✓ Apply {{ acceptIds.length }} selected change(s)</button>
             <button class="btn sendback" :disabled="busy || !hasFeedback" @click="sendBack">↩ Send back to agent</button>
             <button class="btn no" :disabled="busy" @click="rejectAll">Reject all</button>
             <span class="hint">one MemRevision per op · reversible</span>
