@@ -32,6 +32,8 @@ const editableOps = new Set(["add_block", "update_block", "add_document"]);
 // auto-applied). A CONTRADICT can still be force-accepted by an explicit human toggle below.
 const selectable = (c: IngestionChange) => !c.applied && c.class !== "CONTRADICT";
 const acceptIds = computed(() => detail.value?.changes.filter((c) => !c.applied && selected[c.id]).map((c) => c.id) ?? []);
+const allSelectable = computed(() => detail.value?.changes.filter(selectable) ?? []);
+const contradictions = computed(() => detail.value?.changes.filter((c) => !c.applied && c.class === "CONTRADICT").length ?? 0);
 const blockOps = new Set(["attach_source", "detach_source", "link_blocks", "update_block", "set_block_type", "verify_block", "move_block", "delete_block"]);
 function targetBlockId(c: IngestionChange): string | null {
   const p = c.payload as Record<string, unknown>;
@@ -135,6 +137,11 @@ async function loadDetail() {
   finally { loading.value = false; }
 }
 
+// Tick every selectable change (skips already-applied + contradictions) then apply.
+async function applyAll() {
+  for (const c of allSelectable.value) selected[c.id] = true;
+  await apply();
+}
 async function apply() {
   if (!detail.value || !acceptIds.value.length) return;
   busy.value = true; error.value = null;
@@ -252,7 +259,8 @@ watch(() => props.id, loadDetail, { immediate: true });
       </div>
 
       <div class="applybar" v-if="actionable">
-        <button class="btn primary" :disabled="busy || !acceptIds.length" @click="apply">✓ Apply {{ acceptIds.length }} selected change(s)</button>
+        <button class="btn primary" :disabled="busy || !allSelectable.length" @click="applyAll">✓ Apply all{{ contradictions ? ' (except contradictions)' : '' }}</button>
+        <button class="btn" :disabled="busy || !acceptIds.length" @click="apply">Apply {{ acceptIds.length }} selected</button>
         <button class="btn sendback" :disabled="busy || !hasFeedback" @click="sendBack">↩ Send back to agent</button>
         <button class="btn no" :disabled="busy" @click="rejectAll">Reject all</button>
         <span class="hint">one MemRevision per op · reversible</span>
