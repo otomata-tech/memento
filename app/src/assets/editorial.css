@@ -20,7 +20,7 @@
 
 /* ── top bar ───────────────────────────────────────────── */
 .ed .top { display: flex; align-items: center; gap: 22px; padding: 13px 24px; border-bottom: 1px solid var(--color-hair); flex: none; }
-.ed .brand { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: -.02em; }
+.ed .brand { font-family: var(--font-display); font-weight: 700; font-size: 17px; letter-spacing: -.02em; cursor: pointer; }
 .ed .brand small { color: var(--color-mute); font-weight: 500; font-size: 12px; margin-left: 7px; }
 .ed .nav { display: flex; gap: 4px; }
 .ed .nav a { font-size: 13px; padding: 5px 12px; color: var(--color-mute); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }

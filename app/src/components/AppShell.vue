@@ -112,7 +112,7 @@ defineExpose({ reloadShell: loadShell });
 <template>
   <div class="ed">
     <div class="top">
-      <div class="brand">Memento<small>{{ ws || currentOrg?.slug || "" }}</small></div>
+      <div class="brand" @click="go('/')" title="Accueil">Memento<small>{{ ws || currentOrg?.slug || "" }}</small></div>
       <div class="nav" v-if="ws">
         <a :class="{ on: page === 'reader' }" @click="go(`/w/${ws}`)">Read</a>
         <a :class="{ on: page === 'graph' }" @click="go(`/w/${ws}/graph`)">Graph</a>
