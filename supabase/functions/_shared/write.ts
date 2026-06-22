@@ -60,8 +60,15 @@ export async function revise(
   // deleted by the caller, then this revision INSERT threw, losing the audit trail. Cast
   // explicitly so a null is typed jsonb.
   const jsonb = (v: unknown) => v == null ? sql`null::jsonb` : sql`${JSON.stringify(v)}::jsonb`;
+  // `reason` is NOT NULL with no DB default. A verb applied from an ingestion whose payload
+  // carries no `reason` (update_block/move_block/delete_block/set_block_type/deprecate_document
+  // pass `args.reason` with no fallback) lets `undefined` reach here → drizzle renders the column
+  // as DEFAULT → not-null violation. The INSERT then fails *after* the caller already mutated the
+  // row (non-atomic) → silent data change reported as "errored". Backstop it so no write verb can
+  // ever trip the constraint.
+  const safeReason = typeof reason === "string" && reason.trim() ? reason : "(no reason given)";
   await db.insert(revisions).values({
-    workspaceId, targetType, targetId, op, reason, actor, actorKind: "agent",
+    workspaceId, targetType, targetId, op, reason: safeReason, actor, actorKind: "agent",
     before: jsonb(before), after: jsonb(after), ingestionId: ingestionId ?? null,
   });
 }

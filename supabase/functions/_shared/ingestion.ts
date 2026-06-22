@@ -252,7 +252,11 @@ export async function applyIngestion(
     if (edit) { c.payload = { ...c.payload, ...edit }; c.edited = true; c.editedBy = actor; }
     try {
       await assertTargetInWorkspace(c.op, c.payload, row.workspaceId);
-      await OPS[c.op](c.payload, actor, { ingestionId: row.id });
+      // Thread the change's rationale as the revision `reason` when the payload omits one, so the
+      // audit log records *why* the op ran (and never an empty reason). An explicit payload.reason
+      // wins; revise() still backstops a fully-absent reason.
+      const opArgs = ("reason" in c.payload) || !c.rationale ? c.payload : { ...c.payload, reason: c.rationale };
+      await OPS[c.op](opArgs, actor, { ingestionId: row.id });
       c.applied = true; c.appliedAt = new Date().toISOString(); delete c.error;
       results.push({ id: c.id, status: "applied" });
     } catch (e) {
