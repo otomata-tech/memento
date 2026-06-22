@@ -3,10 +3,6 @@ import { supabase } from "./auth";
 import { api } from "./api";
 import { isSiteHost, APP_ORIGIN } from "./hosts";
 
-const PREFERRED = "demo";
-/** Last opened knowledge base (per device), remembered on every visit to /w/:ws. */
-const LAST_WS_KEY = "memento:lastWorkspace";
-
 /** /org and /admin (compat) → the page of the caller's first org. */
 async function firstOrgRedirect() {
   try {
@@ -59,15 +55,13 @@ const PUBLIC = new Set(["/", "/plugin", "/public", "/login", "/oauth/consent", "
 // On the showcase domain (mento.cc), only these pages remain; the rest goes to the app.
 const SITE_PUBLIC = new Set(["/", "/plugin"]);
 
-/** Canonical target for a logged-in user: their last opened KB, otherwise their default. Null if the API does not respond. */
-async function defaultWorkspacePath(): Promise<string | null> {
+/** Home of a logged-in user: the bases of the org owning their default base, else their first org. Null if the API does not respond. */
+async function homePath(): Promise<string | null> {
   try {
-    const [prefs, all] = await Promise.all([api.prefs(), api.workspaces()]);
-    const last = localStorage.getItem(LAST_WS_KEY);
-    // Priority: last opened KB (this device) > server default > reference KB > 1st accessible.
-    const start = [last, prefs.defaultWorkspace, PREFERRED].find((s) => s && all.some((w) => w.slug === s))
-      ?? all[0]?.slug;
-    return start ? `/w/${start}` : null;
+    const [r, prefs] = await Promise.all([api.admin.orgs(), api.prefs()]);
+    const owning = r.orgs.find((o) => o.workspaces.some((w) => w.slug === prefs.defaultWorkspace));
+    const slug = (owning ?? r.orgs[0])?.slug;
+    return slug ? `/org/${slug}/bases` : null;
   } catch { return null; }
 }
 
@@ -78,21 +72,17 @@ router.beforeEach(async (to) => {
     return false;
   }
   // Pre-check on "/" (outside the showcase) BEFORE mounting the landing: getSession is
-  // local (storage, no network) — logged in → default KB, otherwise → login.
+  // local (storage, no network) — logged in → home (org bases), otherwise → login.
   // The landing only shows on mento.cc or if the API is unavailable.
   if (to.path === "/" && !isSiteHost()) {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return { path: "/login" };
-    return (await defaultWorkspacePath()) ?? true;
+    return (await homePath()) ?? true;
   }
   if (PUBLIC.has(to.path)) return true;
   // Reading a KB: tolerated without a session (the viewer/API handle access — only
   // the public part passes anonymously). The other routes (org, accounts…) require a login.
-  // We remember the last opened KB along the way (the landing target at the next launch).
-  if (to.path.startsWith("/w/")) {
-    if (typeof to.params.ws === "string") localStorage.setItem(LAST_WS_KEY, to.params.ws);
-    return true;
-  }
+  if (to.path.startsWith("/w/")) return true;
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { path: "/login", query: { redirect: to.fullPath } };
   return true;
