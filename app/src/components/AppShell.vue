@@ -10,7 +10,7 @@ import { supabase } from "../auth";
 import SharePanel from "./SharePanel.vue";
 import { shell, initSession, loadShell, loadInbox, loadPending } from "../stores/shell";
 
-const props = defineProps<{ page: "reader" | "graph" | "loop" | "org" | "comptes" | "inbox"; ws: string; org?: string }>();
+const props = defineProps<{ page: "reader" | "graph" | "loop" | "org" | "comptes" | "inbox" | "home"; ws: string; org?: string }>();
 const router = useRouter();
 
 // Shared chrome state = single source of truth in the store, read here as computeds
@@ -45,8 +45,8 @@ const wsList = computed(() => currentOrg.value?.workspaces ?? []);
 // loadShell / loadPending / loadInbox now live in the store (../stores/shell).
 
 function go(path: string) { router.push(path); }
-/** Logo → app home: the current org's bases listing, else the landing. */
-function goHome() { router.push(currentOrg.value ? `/org/${currentOrg.value.slug}/bases` : "/"); }
+/** Logo → app home: the user's whole universe. */
+function goHome() { router.push("/home"); }
 function switchWs(e: Event) { router.push(`/w/${(e.target as HTMLSelectElement).value}`); }
 /** Org switch: lands on its default base if inside, otherwise the first, otherwise its page. */
 function switchOrg(o: AdminOrg) {

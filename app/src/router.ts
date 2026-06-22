@@ -14,8 +14,10 @@ async function firstOrgRedirect() {
 }
 
 const routes: RouteRecordRaw[] = [
-  // Public home (logged in: redirected to the default KB by the guard)
+  // Public landing (logged in: the guard redirects to /home)
   { path: "/", component: () => import("./views/HomeView.vue") },
+  // App home: the user's whole universe (all orgs + bases + shared + pinned)
+  { path: "/home", component: () => import("./views/HomeUniverseView.vue") },
   { path: "/plugin", component: () => import("./views/PluginView.vue") },
   // Public gallery: directory + search of public KBs (no account)
   { path: "/public", component: () => import("./views/PublicGalleryView.vue") },
@@ -55,16 +57,6 @@ const PUBLIC = new Set(["/", "/plugin", "/public", "/login", "/oauth/consent", "
 // On the showcase domain (mento.cc), only these pages remain; the rest goes to the app.
 const SITE_PUBLIC = new Set(["/", "/plugin"]);
 
-/** Home of a logged-in user: the bases of the org owning their default base, else their first org. Null if the API does not respond. */
-async function homePath(): Promise<string | null> {
-  try {
-    const [r, prefs] = await Promise.all([api.admin.orgs(), api.prefs()]);
-    const owning = r.orgs.find((o) => o.workspaces.some((w) => w.slug === prefs.defaultWorkspace));
-    const slug = (owning ?? r.orgs[0])?.slug;
-    return slug ? `/org/${slug}/bases` : null;
-  } catch { return null; }
-}
-
 router.beforeEach(async (to) => {
   // mento.cc = showcase: anything that is not a site page (login, viewer, oauth) → app.
   if (isSiteHost() && !SITE_PUBLIC.has(to.path)) {
@@ -72,12 +64,11 @@ router.beforeEach(async (to) => {
     return false;
   }
   // Pre-check on "/" (outside the showcase) BEFORE mounting the landing: getSession is
-  // local (storage, no network) — logged in → home (org bases), otherwise → login.
-  // The landing only shows on mento.cc or if the API is unavailable.
+  // local (storage, no network) — logged in → /home (the universe), otherwise → login.
+  // The landing only shows on mento.cc.
   if (to.path === "/" && !isSiteHost()) {
     const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return { path: "/login" };
-    return (await homePath()) ?? true;
+    return session ? { path: "/home" } : { path: "/login" };
   }
   if (PUBLIC.has(to.path)) return true;
   // Reading a KB: tolerated without a session (the viewer/API handle access — only
