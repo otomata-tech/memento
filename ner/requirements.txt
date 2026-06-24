@@ -1,0 +1,7 @@
+# Micro-service NER Memento. torch CPU : installer avec
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+gliner>=0.2.27
+torch>=2.2
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
