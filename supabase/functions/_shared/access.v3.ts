@@ -18,7 +18,14 @@
  * `search` → zéro divergence possible.
  */
 import { sql } from "drizzle-orm";
-import { db } from "./db.ts";
+// db chargé paresseusement : importer ce module ne doit PAS exiger DATABASE_URL
+// (aligné sur entities.ts) → toute la surface v3 reste importable/testable sans DB.
+type Db = typeof import("./db.ts").db;
+let _db: Db | null = null;
+async function getDb(): Promise<Db> {
+  if (!_db) _db = (await import("./db.ts")).db;
+  return _db;
+}
 
 export class AccessError extends Error {}
 
@@ -42,10 +49,10 @@ export function safeErrorMessage(e: unknown): string {
  * transaction (set_config local) → les prédicats SQL voient l'appelant. Local =
  * jamais de fuite d'identité d'une requête sur la suivante via le pool.
  */
-export async function withCurrentSub<T>(sub: string, fn: (tx: typeof db) => Promise<T>): Promise<T> {
-  return db.transaction(async (tx) => {
+export async function withCurrentSub<T>(sub: string, fn: (tx: Db) => Promise<T>): Promise<T> {
+  return (await getDb()).transaction(async (tx) => {
     await tx.execute(sql`select set_config('request.jwt.claims', ${JSON.stringify({ sub: sub ?? "" })}, true)`);
-    return fn(tx as unknown as typeof db);
+    return fn(tx as unknown as Db);
   });
 }
 
