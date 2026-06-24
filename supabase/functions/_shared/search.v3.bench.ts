@@ -46,9 +46,11 @@ Deno.test({
   const sql = postgres(DB!, { prepare: false });
   const tag = `bench-${crypto.randomUUID().slice(0, 8)}`;
   try {
-    // ── Seed : org + base + N pages (20% public) + 1 chunk/page (embedding aléatoire) ──
+    // ── Seed : org + base + membership (bench-user) + N pages (20% public énumérables,
+    // 80% private exclues par page_read_mode) + 1 chunk/page (embedding aléatoire) ──
     const [org] = await sql`insert into mem_orgs (slug, name) values (${tag}, ${tag}) returning id`;
     const [base] = await sql`insert into mem_bases (org_id, name) values (${org.id}, ${tag}) returning id`;
+    await sql`insert into mem_memberships (org_id, user_id, role) values (${org.id}, 'bench-user', 'member')`;
 
     const WORDS = ["migration", "pgvector", "doctrine", "entité", "recherche", "page", "embedding", "accès", "mistral", "chunk"];
     for (let i = 0; i < N_PAGES; i++) {

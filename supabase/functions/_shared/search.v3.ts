@@ -11,8 +11,16 @@
  * cutover se fera en basculant les Edge functions de l'un vers l'autre.
  */
 import { sql } from "drizzle-orm";
-import { db } from "./db.ts";
 import type { SearchHit, EntityRef, Search as ContractSearch } from "../../../server/src/mcp-contract.v3.ts";
+
+// db chargé PARESSEUSEMENT (même pattern qu'entities.ts) : importer ce module ne doit
+// PAS exiger DATABASE_URL — seul l'appel réel à search() ouvre la connexion. Permet à
+// `deno test` de charger le module (puis skip si pas de DB) sans DATABASE_URL.
+let _db: typeof import("./db.ts").db | null = null;
+async function getDb() {
+  if (!_db) _db = (await import("./db.ts")).db;
+  return _db;
+}
 
 /** Interface du lot embedding (Mistral/1024) — injectée (pas de module embed v3 encore). */
 export type EmbedTexts = (texts: string[]) => Promise<number[][] | null>;
@@ -21,16 +29,24 @@ export interface SearchContext { sub: string | null }
 export interface SearchDeps { embedTexts: EmbedTexts }
 
 type V3SearchArgs = Parameters<ContractSearch>[0];
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type Tx = Parameters<Parameters<typeof import("./db.ts").db.transaction>[0]>[0];
 
 const RRF_K_V3 = 60;
 const SEM_OVERFETCH = 5; // sur-récupère côté kNN avant filtre d'accès (recall sous post-filtre)
 const HEADLINE = "StartSel=«, StopSel=», MaxFragments=2, MaxWords=28, MinWords=6";
 const ENTITIES_PER_HIT = 6;
 
-// Prédicat d'accès — RÉPLIQUE la policy `mem_pages_read_placeholder` de la migration v3
-// (public OU base accessible OU page accessible). Alias de table figé = `p`.
-const ACCESS = sql`(p.visibility = 'public' OR p.base_id IN (SELECT accessible_base_ids()) OR p.id IN (SELECT accessible_page_ids()))`;
+// Prédicat d'ÉNUMÉRATION (≠ lecture par lien). La recherche LISTE des pages : elle ne
+// doit PAS surfacer les pages `public` d'AUTRES orgs (#56 les expose pour le get-par-lien,
+// jamais pour l'énumération). On ne garde donc que les pages à mode de lecture EFFECTIF
+// (membre / grant / héritage) = exactement l'ensemble `accessible_page_ids()` de #56,
+// en forme PER-ROW `page_read_mode(p.id) IS NOT NULL` (planner-friendly sous HNSW : pas de
+// matérialisation du set complet). Alias de table figé = `p`.
+// NB #56 : `is_page_accessible` (= public-par-lien inclus) arme la RLS ; il NE convient PAS
+// au WHERE de search (l'en-tête d'access.v3.ts affirme le contraire → à corriger côté #56).
+// Un wrapper nommé `is_page_enumerable(uuid)` (= `page_read_mode($1) IS NOT NULL`) côté #56
+// rendrait ceci plus lisible — on basculerait alors sur l'appel nommé.
+const ENUMERABLE = sql`page_read_mode(p.id) IS NOT NULL`;
 
 const toVecLit = (v: number[]) => `[${v.join(",")}]`;
 
@@ -63,7 +79,7 @@ async function lexicalPages(tx: Tx, q: string, k: number, filt: ReturnType<typeo
     SELECT p.id AS page_id, p.title, p.description, p.occurred_at,
            ts_headline('french_unaccent', p.body, query, ${HEADLINE}) AS passage
     FROM mem_pages p, websearch_to_tsquery('french_unaccent', ${q}) query
-    WHERE p.status = 'active' AND p.body_fts @@ query AND ${ACCESS} AND ${filt}
+    WHERE p.status = 'active' AND p.body_fts @@ query AND ${ENUMERABLE} AND ${filt}
     ORDER BY ts_rank(p.body_fts, query) DESC
     LIMIT ${k}`);
   return [...rows];
@@ -76,7 +92,7 @@ async function semanticPages(tx: Tx, vec: number[], k: number, filt: ReturnType<
   const rows = await tx.execute<PageRow>(sql`
     SELECT c.page_id, p.title, p.description, p.occurred_at, c.content AS passage
     FROM mem_page_chunks c JOIN mem_pages p ON p.id = c.page_id
-    WHERE c.embedding IS NOT NULL AND p.status = 'active' AND ${ACCESS} AND ${filt}
+    WHERE c.embedding IS NOT NULL AND p.status = 'active' AND ${ENUMERABLE} AND ${filt}
     ORDER BY c.embedding <=> ${lit}::halfvec
     LIMIT ${k * SEM_OVERFETCH}`);
   const seen = new Set<string>();
@@ -99,7 +115,7 @@ async function sourcePages(tx: Tx, q: string, k: number, filt: ReturnType<typeof
     FROM mem_sources s
     JOIN mem_page_sources ps ON ps.source_id = s.id
     JOIN mem_pages p ON p.id = ps.page_id, websearch_to_tsquery('french_unaccent', ${q}) query
-    WHERE s.fts @@ query AND p.status = 'active' AND ${ACCESS} AND ${filt}
+    WHERE s.fts @@ query AND p.status = 'active' AND ${ENUMERABLE} AND ${filt}
     ORDER BY rank DESC
     LIMIT ${k * SEM_OVERFETCH}`);
   const seen = new Set<string>();
@@ -160,7 +176,7 @@ export async function search(ctx: SearchContext, args: V3SearchArgs, deps: Searc
   const needSem = scope !== "sources";
   const vec = needSem ? (await deps.embedTexts([q]).catch(() => null))?.[0] ?? null : null;
 
-  return await db.transaction(async (tx) => {
+  return await (await getDb()).transaction(async (tx) => {
     // Identité → GUC transaction-local (pooler-safe) pour `accessible_*_ids()`.
     if (ctx.sub) {
       await tx.execute(sql`SELECT set_config('request.jwt.claims', ${JSON.stringify({ sub: ctx.sub })}, true)`);

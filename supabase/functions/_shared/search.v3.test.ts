@@ -41,30 +41,41 @@ Deno.test({
   const tag = `stest-${crypto.randomUUID().slice(0, 8)}`;
   const ctx = { sub: "tester" };
   try {
+    // Org A : `tester` en est MEMBRE → ses pages org/public sont énumérables.
     const [org] = await sql`insert into mem_orgs (slug, name) values (${tag}, ${tag}) returning id`;
     const [base] = await sql`insert into mem_bases (org_id, name) values (${org.id}, ${tag}) returning id`;
+    await sql`insert into mem_memberships (org_id, user_id, role) values (${org.id}, ${ctx.sub}, 'member')`;
 
-    const mkPage = async (title: string, body: string, vis: string, status = "active", parent: string | null = null) => {
+    const mkPageIn = async (baseId: string, title: string, body: string, vis: string, status = "active", parent: string | null = null) => {
       const [p] = await sql`
         insert into mem_pages (base_id, parent_id, title, description, body, visibility, status)
-        values (${base.id}, ${parent}, ${title}, ${`à propos de ${title}`}, ${body}, ${vis}::mem_page_visibility, ${status}::mem_page_status)
+        values (${baseId}, ${parent}, ${title}, ${`à propos de ${title}`}, ${body}, ${vis}::mem_page_visibility, ${status}::mem_page_status)
         returning id`;
       return p.id as string;
     };
+    const mkPage = (title: string, body: string, vis: string, status = "active", parent: string | null = null) =>
+      mkPageIn(base.id, title, body, vis, status, parent);
     const mkChunk = (pageId: string, content: string, vec: number[]) =>
       sql`insert into mem_page_chunks (page_id, idx, content, model_version, embedding)
           values (${pageId}, 0, ${content}, 'test', ${vecLit(vec)}::halfvec)`;
 
-    // Pages : une publique pertinente (FTS + sémantique alignée), une privée (même
-    // contenu → exclue par accès), une deprecated (exclue), une publique hors-sujet.
-    const pubId = await mkPage("Migration pgvector", "on a retenu pgvector pour la recherche sémantique des pages", "public");
+    // Org A : page org pertinente (FTS + sémantique alignée), privée (exclue), deprecated
+    // (exclue), org hors-sujet.
+    const pubId = await mkPage("Migration pgvector", "on a retenu pgvector pour la recherche sémantique des pages", "org");
     await mkChunk(pubId, "pgvector recherche sémantique", QVEC); // chunk = vecteur requête → top kNN
     const privId = await mkPage("Secret pgvector", "pgvector recherche sémantique confidentielle", "private");
     await mkChunk(privId, "pgvector secret", QVEC);
-    const depId = await mkPage("Vieux pgvector", "ancienne note pgvector recherche", "public", "deprecated");
+    const depId = await mkPage("Vieux pgvector", "ancienne note pgvector recherche", "org", "deprecated");
     await mkChunk(depId, "obsolète", unit(7));
-    const offId = await mkPage("Sujet sans rapport", "recette de cuisine au beurre", "public");
+    const offId = await mkPage("Sujet sans rapport", "recette de cuisine au beurre", "org");
     await mkChunk(offId, "cuisine", unit(9));
+
+    // Org B : `tester` n'en est PAS membre. Sa page est PUBLIC (lisible par lien) mais ne
+    // doit JAMAIS être ÉNUMÉRÉE par la recherche d'un non-membre — le cœur du fix.
+    const [orgB] = await sql`insert into mem_orgs (slug, name) values (${`${tag}-b`}, ${`${tag}-b`}) returning id`;
+    const [baseB] = await sql`insert into mem_bases (org_id, name) values (${orgB.id}, ${`${tag}-b`}) returning id`;
+    const otherPubId = await mkPageIn(baseB.id, "Public autre org", "pgvector recherche sémantique chez un tiers", "public");
+    await mkChunk(otherPubId, "pgvector recherche sémantique", QVEC); // même vecteur requête → cosinus parfait
 
     // Entité mentionnée sur la page publique.
     const [ent] = await sql`
@@ -82,9 +93,10 @@ Deno.test({
     {
       const hits = await search(ctx, { q: "pgvector recherche", limit: 10 }, { embedTexts: embedNull });
       const ids = hits.map((h) => h.pageId);
-      assert(ids.includes(pubId), "page publique trouvée (lexical)");
+      assert(ids.includes(pubId), "page de l'org du membre trouvée (lexical)");
       assert(!ids.includes(privId), "page privée EXCLUE (accès)");
       assert(!ids.includes(depId), "page deprecated EXCLUE");
+      assert(!ids.includes(otherPubId), "page PUBLIC d'une AUTRE org NON listée (énumération ≠ lecture-par-lien)");
       const pub = hits.find((h) => h.pageId === pubId)!;
       assert(pub.matchedBy.includes("lexical") && !pub.matchedBy.includes("semantic"), "lexical-only");
       assert(pub.passage.includes("«"), "passage = headline FTS");
@@ -99,6 +111,8 @@ Deno.test({
       assert(pub, "page publique trouvée (hybride)");
       assert(pub.matchedBy.includes("semantic"), "le régime sémantique a matché");
       assert(!hits.some((h) => h.pageId === privId), "privé toujours exclu en sémantique (pas de fuite HNSW)");
+      // cosinus parfait (même vecteur) MAIS autre org → exclu : l'énumération prime sur la proximité.
+      assert(!hits.some((h) => h.pageId === otherPubId), "public autre-org exclu même à cosinus parfait");
     }
 
     // ── 3. scope 'sources' : FTS verbatim de la source, remontée via sa page ──
