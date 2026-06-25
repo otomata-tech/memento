@@ -24,6 +24,7 @@ import { assertAccess, assertCanSetVisibility, withCurrentSub, AccessError, safe
 import { search as searchV3 } from "../_shared/search.v3.ts";
 import { embedTexts } from "../_shared/embed.v3.ts";
 import { defaultDeps, resolveMention, resolvePageEntities } from "../_shared/entities.ts";
+import { indexPage } from "../_shared/indexing.v3.ts";
 import type {
   LoadResult, SearchHit, EntityRef, ProposeOp, TreeNode,
 } from "../../../server/src/mcp-contract.v3.ts";
@@ -394,12 +395,14 @@ export async function v3Apply(sub: string, args: { ingestionId: string }): Promi
     return final;
   });
 
-  // NER async APRÈS commit (la page existe ; non bloquant, best-effort).
+  // APRÈS commit (la page existe ; non bloquant, best-effort) : extraction NER d'entités
+  // + indexation sémantique (chunk + embed). Le FTS lexical, lui, marche déjà (body_fts).
   for (const t of nerTargets) {
-    const fire = resolvePageEntities(defaultDeps(), { orgId: t.orgId, pageId: t.pageId, text: t.text })
+    const ner = resolvePageEntities(defaultDeps(), { orgId: t.orgId, pageId: t.pageId, text: t.text })
       .catch((e) => console.warn("[mcp v3] NER skipped (non-blocking):", e instanceof Error ? e.message : e));
-    // @ts-ignore EdgeRuntime présent à l'exécution Supabase ; sinon fire-and-forget.
-    if (typeof EdgeRuntime !== "undefined") EdgeRuntime.waitUntil(fire);
+    const idx = indexPage(t.pageId, t.text)
+      .catch((e) => console.warn("[mcp v3] indexing skipped (non-blocking):", e instanceof Error ? e.message : e));
+    if (typeof EdgeRuntime !== "undefined") { EdgeRuntime.waitUntil(ner); EdgeRuntime.waitUntil(idx); }
   }
   return { status };
 }
