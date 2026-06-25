@@ -4,6 +4,16 @@ Knowledge substrate for agents, consumed via **MCP**. Typed blocks, sourced and 
 maintained by a propose-validate loop. See [`docs/principles.md`](docs/principles.md) for the why
 and [`docs/specs/knowledge-base.md`](docs/specs/knowledge-base.md) for the model + MCP surface.
 
+## V3 — refonte page-centrée (construite sur `main`, NON déployée)
+
+Pivot majeur (ADR `docs/adr/0001-0003`) : **suppression des blocs et liens typés** → une page = prose pure (titre+description+corps), un arbre ; **entités** = objet de 1er ordre niveau org (NER serveur + logique/décision) ; **1 base/org** ; accès par page ; **8 verbes MCP** (`server/src/mcp-contract.v3.ts`). Fichiers `*.v3.ts` à côté de la v2 (db lazy ; v2 intacte jusqu'au cutover).
+
+- **Lignées migration SÉPARÉES** : v2 = `server/drizzle/` (appliquée à la prod par le CI `db:migrate`) · **v3 = `supabase/migrations/`** (rejouée par `supabase db reset` seulement, **PAS** auto-appliquée à la prod). Noms `mem_*` en collision → le cutover bascule la lignée, ne mélange pas.
+- **Tester un lot v3 DB-backed** : conteneur pgvector jetable + appliquer `supabase/migrations/*.sql` (psql) + `deno test … --config supabase/functions/deno.json` avec `DATABASE_URL` posé. Les modules `*.v3.ts` chargent **sans** `DATABASE_URL` (db lazy `getDb()`) → unit/mock sans DB ; les tests vraiment DB-backed s'auto-skip sinon.
+- **NER** = micro-service Python séparé (GLiNER, 3 types personne/entreprise/outil), `https://memento-ner.oto.zone`, bearer ; appelé **async** par `apply` (non bloquant). **Embeddings** = Mistral `mistral-embed` (1024), env `MEMENTO_MISTRAL_API_KEY`. **Indexation** chunk+embed dans l'apply (`_shared/indexing.v3.ts`).
+- Reste : migration de données v2→v3 (#58), UI page-centrée (#59), déploiement/cutover.
+- ⚠️ **Repo PUBLIC** : pas de noms clients/personnes dans ADR/tests/exemples (anonymiser).
+
 ## Project context
 
 - **Open-core**: this repo is the canonical, **public** (Apache-2.0) home — development happens in the open. The pre-open-core private history is archived at `otomata-tech/memento-legacy`.
