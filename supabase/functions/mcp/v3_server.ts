@@ -16,6 +16,7 @@ import { AccessError, safeErrorMessage } from "../_shared/access.v3.ts";
 import {
   authenticate, protectedResourceMetadata, wwwAuthenticate, isDiscoveryPath, authServerMetadata,
 } from "../_shared/auth.ts";
+import { V3_INSTRUCTIONS } from "../_shared/discoverability.v3.ts";
 import {
   LIST_KINDS, v3Apply, v3Count, v3Digest, v3Get, v3List, v3Load, v3ProposeChanges,
   v3ReviewIngestion, v3Search, v3Share,
@@ -36,11 +37,11 @@ function guarded(fn: (args: Record<string, unknown>) => Promise<unknown>) {
 }
 
 export function buildV3Server(sub: string): McpServer {
-  const server = new McpServer({ name: "memento-v3", title: "Memento", version: "3.0.0" });
+  const server = new McpServer({ name: "memento-v3", title: "Memento", version: "3.0.0" }, { instructions: V3_INSTRUCTIONS });
   const changeSchema = z.array(z.object({ op: z.string(), payload: z.record(z.string(), z.any()) })).max(500);
 
   server.registerTool("load", {
-    description: "L'épine d'une base : guide (doctrine racine) + arbre N+2 + entités saillantes + compteurs + etag. 0 LLM.",
+    description: "APPELLE-MOI EN PREMIER dès qu'il s'agit de mémoriser ou retrouver une info : l'épine d'une base — guide (doctrine racine) + arbre N+2 + entités saillantes + compteurs + etag. 0 LLM. Permet de te repérer avant toute recherche.",
     inputSchema: { base: z.string().optional(), depth: z.number().int().min(1).max(4).optional() },
     // deno-lint-ignore no-explicit-any
   }, guarded((a) => v3Load(sub, a as any)));
