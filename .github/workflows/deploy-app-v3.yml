@@ -1,0 +1,37 @@
+name: Deploy app (v3)
+
+# Build-serveur de l'app Memento V3 (SPA page-centrée) → /opt/memento-v3/dist sur
+# otomata-0, servi en statique par Caddy (+ proxy /api,/mcp,/.well-known vers le
+# projet Supabase v3). Déclenché à chaque push sur memento-v3 touchant app/.
+#
+# La clé SSH_DEPLOY_KEY est ÉPINGLÉE en forced-command sur /opt/deploy/memento-v3.sh
+# côté serveur : le `script:` ci-dessous ne fait que « sonner à la porte », toute la
+# logique (git reset origin/memento-v3 + npm build + sync atomique + smoke + rollback)
+# vit dans /opt/deploy/memento-v3.sh. Pour changer le déploiement : éditer ce script.
+# Gated par repository_owner (un fork ne déploie pas notre prod).
+
+on:
+  push:
+    branches: [memento-v3]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy-app-v3.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-app-v3
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository_owner == 'otomata-tech'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy v3 app to otomata-0
+        # Pin par SHA (un tag re-poussé = exécution arbitraire avec accès au secret).
+        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+        with:
+          host: 51.15.225.121 # otomata-0 (business)
+          username: root
+          key: ${{ secrets.SSH_DEPLOY_KEY }}
+          script: deploy memento-v3 # ignoré — la clé force /opt/deploy/memento-v3.sh

@@ -1,0 +1,39 @@
+name: Deploy edge functions (v3)
+
+# Déploie les Edge Functions v3 (api-v3 + mcp-v3) sur le projet Supabase BLUE-GREEN
+# v3 (ref hhvjbnhpjpxuicgviutt) à chaque push sur la branche memento-v3.
+# PAS de migration DB ici (les migrations v3 sont sensibles → appliquées à la main).
+# Gated par repository_owner (un fork ne déploie pas notre prod).
+#
+# Secret requis : SUPABASE_ACCESS_TOKEN (account-level, couvre le projet v3).
+
+on:
+  push:
+    branches: [memento-v3]
+    paths:
+      - "supabase/functions/**"
+      - ".github/workflows/deploy-functions-v3.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-functions-v3
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository_owner == 'otomata-tech'
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_PROJECT_REF: hhvjbnhpjpxuicgviutt # projet v3 (blue-green) — ref publique
+    steps:
+      - uses: actions/checkout@v6
+      - uses: supabase/setup-cli@v2
+        with:
+          version: latest
+      - name: Deploy functions v3 (api-v3 + mcp-v3)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          rm -f supabase/functions/deno.lock
+          supabase functions deploy api-v3 --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy mcp-v3 --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
