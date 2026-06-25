@@ -151,7 +151,7 @@ function envNum(name: string, dflt: number): number {
 export function defaultConfig(): ResolveConfig {
   return {
     // 0.3 = défaut pg_trgm (tranché : l'issue suggérait 0.7, trop agressif — l'espace
-    // casse les trigrammes de « Movin Motion »/« Movinmotion » ; JW + bandes tranchent ensuite).
+    // casse les trigrammes de « Lumera Pay »/« Lumerapay » ; JW + bandes tranchent ensuite).
     trigramThreshold: envNum("MEMENTO_ENTITY_TRIGRAM_THRESHOLD", 0.3),
     // conservateur : « 0 faux-merge auto » (Done). Le quasi-doublon doit tomber EN REVUE.
     autolinkThreshold: envNum("MEMENTO_ENTITY_AUTOLINK_THRESHOLD", 0.95),

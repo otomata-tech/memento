@@ -111,9 +111,9 @@ const DEPS = (store: MemStore) => ({ store });
 
 Deno.test("escalier — exact-match auto (insensible à la casse via normalise)", async () => {
   const store = new MemStore();
-  const mm = store.seed(ORG, "entreprise", "Movinmotion");
+  const mm = store.seed(ORG, "entreprise", "Lumera");
   const out = await resolveMention(DEPS(store), {
-    orgId: ORG, pageId: "p1", type: "entreprise", label: "MOVINMOTION",
+    orgId: ORG, pageId: "p1", type: "entreprise", label: "LUMERA",
   });
   assertEquals(out.action, "exact", "exact-match");
   assert(out.action === "exact" && out.entityId === mm.id && !out.isNew, "lié à l'entité existante, pas de création");
@@ -123,10 +123,10 @@ Deno.test("escalier — exact-match auto (insensible à la casse via normalise)"
 
 Deno.test("escalier — quasi-doublon → stub + entity_review (0 faux-merge auto)", async () => {
   const store = new MemStore();
-  const mm = store.seed(ORG, "entreprise", "Movinmotion");
-  // « Movinmotion SAS » vs « Movinmotion » : JW ≈ 0.95 → bande revue (< autolink 0.95, ≥ review 0.80).
+  const mm = store.seed(ORG, "entreprise", "Lumera");
+  // « Lumera SAS » vs « Lumera » : JW ≈ 0.95 → bande revue (< autolink 0.95, ≥ review 0.80).
   const out = await resolveMention(DEPS(store), {
-    orgId: ORG, pageId: "p1", type: "entreprise", label: "Movinmotion SAS",
+    orgId: ORG, pageId: "p1", type: "entreprise", label: "Lumera SAS",
   });
   assertEquals(out.action, "stub_review", "quasi-doublon → revue");
   assert(out.action === "stub_review" && out.keepId === mm.id, "suggestion garde l'entité canonique");
@@ -138,7 +138,7 @@ Deno.test("escalier — quasi-doublon → stub + entity_review (0 faux-merge aut
 
 Deno.test("escalier — nouveau (aucun candidat) → stub, sans revue", async () => {
   const store = new MemStore();
-  store.seed(ORG, "entreprise", "Movinmotion");
+  store.seed(ORG, "entreprise", "Lumera");
   const out = await resolveMention(DEPS(store), {
     orgId: ORG, pageId: "p1", type: "outil", label: "Pennylane",
   });
@@ -172,14 +172,14 @@ Deno.test("escalier — entités distinctes ne fusionnent jamais (Slack vs Notio
 
 Deno.test("orchestrateur — extrait (NER mock) puis résout chaque mention", async () => {
   const store = new MemStore();
-  store.seed(ORG, "personne", "Guillaume Royer");
+  store.seed(ORG, "personne", "Jean Dupont");
   const ner = (_text: string): Promise<NerEntity[]> =>
     Promise.resolve([
-      { text: "Guillaume Royer", type: "personne", score: 0.97, start: 0, end: 15 },
+      { text: "Jean Dupont", type: "personne", score: 0.97, start: 0, end: 15 },
       { text: "Pennylane", type: "outil", score: 0.88, start: 20, end: 29 },
     ]);
   const outs = await resolvePageEntities({ store, ner }, {
-    orgId: ORG, pageId: "p1", text: "Guillaume Royer a adopté Pennylane.",
+    orgId: ORG, pageId: "p1", text: "Jean Dupont a adopté Pennylane.",
   });
   assertEquals(outs.length, 2, "2 mentions résolues");
   assertEquals(outs[0].action, "exact", "personne existante → exact");
@@ -241,6 +241,6 @@ Deno.test("extractEntities — NER_URL manquante → erreur claire", async () =>
 Deno.test("jaroWinkler — sanity (bonus de préfixe, bornes)", () => {
   assertEquals(jaroWinkler("abc", "abc"), 1, "identiques = 1");
   assertEquals(jaroWinkler("", "abc"), 0, "vide = 0");
-  assert(jaroWinkler("movinmotion", "movin motion") > 0.85, "quasi-doublon proche élevé");
+  assert(jaroWinkler("lumerapay", "lumera pay") > 0.85, "quasi-doublon proche élevé");
   assert(jaroWinkler("slack", "notion") < 0.6, "distincts faibles");
 });

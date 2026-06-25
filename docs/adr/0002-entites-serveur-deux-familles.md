@@ -55,7 +55,7 @@ Smoke test sur 4 textes FR réalistes (réunion / SAV / veille / carte d'entrepr
 
 - **GLiNER n'est pas un LLM** (encodeur bi-directionnel famille BERT, ~200M) → conforme au « détecter sans recourir à un LLM ».
 - **Latence ~100–170 ms/page** (chargement modèle 36 s one-time → garder chaud) → compatible **async au write**.
-- **Qualité (types personne/entreprise/outil)** : personnes 0.94–0.99 (toutes captées) ; entreprises et outils bien détectés (Movinmotion, Tiple, Otomata, Slack, Pennylane, Google Drive…).
+- **Qualité (types personne/entreprise/outil)** : personnes 0.94–0.99 (toutes captées) ; entreprises et outils bien détectés (Lumera, Tiple, Otomata, Slack, Pennylane, Google Drive…).
 - **Erreurs = ambiguïtés de type à confiance basse** : « Notion » → entreprise vs outil (0.69) ; « DAF » (un rôle) → entreprise (0.63) ; « TEMPO » (offre) → outil (0.61). **Toutes < 0.7** → un seuil les route proprement vers la revue / l'adjudicateur. Empiriquement, l'escalier + l'adjudicateur sur résidu sont **justifiés, pas en remplacement**.
 - **9 types ↑ la confusion** (Memento oscille outil/org, TEMPO outil/produit) → confirme le choix de **3 types**.
 

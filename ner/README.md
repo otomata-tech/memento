@@ -27,7 +27,7 @@ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/w
 uvicorn app:app --port 8088      # le modèle se charge au démarrage (lifespan warmup)
 curl localhost:8088/health
 curl -s localhost:8088/extract -H 'content-type: application/json' \
-  -d '{"text":"Guillaume Royer (Inovatech) a migré de Notion vers Memento."}' | jq
+  -d '{"text":"Jean Dupont (Novatech) a migré de Notion vers Memento."}' | jq
 ```
 
 ## Déploiement `otomata-0` (cf. skill `infra:prod-init`)
