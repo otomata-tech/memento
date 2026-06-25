@@ -53,6 +53,19 @@ async function resolveBaseId(tx: Tx, base?: string): Promise<string> {
   throw new Error("several accessible bases — specify `base`");
 }
 
+// ── Verbe bases : les bases énumérables de l'appelant (amorçage UI) ───────────
+// Le front ne peut pas deviner un UUID de base → il appelle ce verbe en premier
+// pour amorcer le sélecteur (corrige le wart `base?` du contrat côté client).
+export function v3Bases(sub: string): Promise<{ bases: { id: string; name: string; orgId: string; role: string }[] }> {
+  return withCurrentSub(sub, async (tx) => {
+    const bases = rows<{ id: string; name: string; orgId: string; role: string }>(await tx.execute(sql`
+      select b.id, b.name, b.org_id as "orgId", m.role
+      from mem_bases b join mem_memberships m on m.org_id = b.org_id and m.user_id = mem_current_sub()
+      order by b.name`));
+    return { bases };
+  });
+}
+
 async function orgIdOfBase(tx: Tx, baseId: string): Promise<string> {
   return one<{ org_id: string }>(await tx.execute(sql`select org_id from mem_bases where id = ${baseId}::uuid`)).org_id;
 }
@@ -435,6 +448,7 @@ export function v3ReviewIngestion(
 export function v3Digest(sub: string, args: { base?: string; sinceDays?: number }): Promise<Digest> {
   return withCurrentSub(sub, async (tx) => {
     const baseId = await resolveBaseId(tx, args.base);
+    await assertAccess(sub, { baseId }); // membre de l'org — sinon fuite digest cross-org via UUID connu
     const orgId = await orgIdOfBase(tx, baseId);
     return runDigest(orgId, { sinceDays: args.sinceDays });
   });

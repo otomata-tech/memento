@@ -3,6 +3,9 @@ import { supabase } from "./auth";
 import { api } from "./api";
 import { isSiteHost, APP_ORIGIN } from "./hosts";
 
+/** Déploiement v3 page-centré (memento-v3) : `/`, `/home`, `/inbox` pointent sur le viewer v3. */
+const V3 = import.meta.env.VITE_MEMENTO_V3 === "true";
+
 /** /org and /admin (compat) → the page of the caller's first org. */
 async function firstOrgRedirect() {
   try {
@@ -19,6 +22,16 @@ const routes: RouteRecordRaw[] = [
   // App home: the user's whole universe (all orgs + bases + shared + pinned)
   { path: "/home", component: () => import("./views/HomeUniverseView.vue") },
   { path: "/plugin", component: () => import("./views/PluginView.vue") },
+  // V3 — viewer page-centré (déploiement memento-v3). Shell + vues imbriquées.
+  {
+    path: "/v3", component: () => import("./views/v3/V3Layout.vue"),
+    children: [
+      { path: "", component: () => import("./views/v3/PagesView.vue") },
+      { path: "page/:id", component: () => import("./views/v3/PagesView.vue") },
+      { path: "search", component: () => import("./views/v3/SearchView.vue") },
+      { path: "inbox", component: () => import("./views/v3/InboxView.vue") },
+    ],
+  },
   // Public gallery: directory + search of public KBs (no account)
   { path: "/public", component: () => import("./views/PublicGalleryView.vue") },
   // Read — the block reader
@@ -68,7 +81,11 @@ router.beforeEach(async (to) => {
   // The landing only shows on mento.cc.
   if (to.path === "/" && !isSiteHost()) {
     const { data: { session } } = await supabase.auth.getSession();
-    return session ? { path: "/home" } : { path: "/login" };
+    return session ? { path: V3 ? "/v3" : "/home" } : { path: "/login" };
+  }
+  // Sur le déploiement v3, les entrées v2 (/home, /inbox) renvoient au viewer v3.
+  if (V3 && (to.path === "/home" || to.path === "/inbox")) {
+    return { path: to.path === "/inbox" ? "/v3/inbox" : "/v3" };
   }
   if (PUBLIC.has(to.path)) return true;
   // Reading a KB: tolerated without a session (the viewer/API handle access — only
