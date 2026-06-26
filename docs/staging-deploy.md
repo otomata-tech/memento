@@ -19,6 +19,7 @@ se déclenche (filtres de chemin) :
 | --------------------------- | --------------------------- | -------------------------------------- |
 | `app/**`                    | **Deploy app (v3)**         | SPA → otomata-0, servie par Caddy      |
 | `supabase/functions/**`     | **Deploy edge functions (v3)** | Edge Functions du projet Supabase v3 |
+| `ner/**`                    | **Deploy NER (v3)**         | micro-service GLiNER → box dédiée `memento-ner` |
 | autre (`docs/`, `server/`…) | aucun                       | rien n'est déployé                     |
 
 ```bash
