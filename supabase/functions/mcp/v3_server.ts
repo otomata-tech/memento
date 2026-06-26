@@ -21,6 +21,7 @@ import {
   LIST_KINDS, v3Apply, v3Count, v3Digest, v3Get, v3List, v3Load, v3ProposeChanges,
   v3ReviewIngestion, v3Search, v3Share,
 } from "./v3.ts";
+import { ADMIN_ACTIONS, v3Admin } from "./v3_admin.ts";
 
 const json = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data) }] });
 
@@ -98,13 +99,26 @@ export function buildV3Server(sub: string): McpServer {
   }, guarded((a) => v3ReviewIngestion(sub, a as any)));
 
   server.registerTool("share", {
-    description: "Partage par page : visibilité (private|org|public) OU grant user (read|write).",
+    description: "Partage par page : visibilité (private|org|public) OU grant user (read|write). `user` accepte un email (le compte est provisionné + invité au besoin) ou un sub.",
     inputSchema: {
       pageRef: z.string(),
       to: z.union([z.object({ visibility: z.enum(["private", "org", "public"]) }), z.object({ user: z.string(), mode: z.enum(["read", "write"]) })]),
     },
     // deno-lint-ignore no-explicit-any
   }, guarded((a) => v3Share(sub, a as any)));
+
+  // admin = verbe UNIQUE hors noyau (gestion org/équipe). 1 org = 1 base → create_org
+  // crée la base d'office, rename_base la renomme. Rôles admin|member. Champs lus selon l'action.
+  server.registerTool("admin", {
+    description: "Gestion org/équipe : action=orgs (lister mes orgs + membres + base), create_org (crée org + sa base), rename_base, invite_member (par email), set_role (admin|member), remove_member.",
+    inputSchema: {
+      action: z.enum(ADMIN_ACTIONS),
+      name: z.string().optional(), slug: z.string().optional(), baseName: z.string().optional(),
+      baseId: z.string().optional(), orgSlug: z.string().optional(),
+      email: z.string().optional(), userId: z.string().optional(), role: z.enum(["admin", "member"]).optional(),
+    },
+    // deno-lint-ignore no-explicit-any
+  }, guarded((a) => v3Admin(sub, a as any)));
 
   return server;
 }

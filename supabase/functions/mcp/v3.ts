@@ -22,6 +22,8 @@
 import { sql } from "drizzle-orm";
 import { assertAccess, assertCanSetVisibility, withCurrentSub, AccessError, safeErrorMessage } from "../_shared/access.v3.ts";
 import { ensurePersonalBaseV3 } from "../_shared/onboarding.v3.ts";
+import { ensureAccount } from "../_shared/accounts.ts";
+import { assertWithinLimit } from "../_shared/ratelimit.ts";
 import { search as searchV3 } from "../_shared/search.v3.ts";
 import { embedTexts } from "../_shared/embed.v3.ts";
 import { defaultDeps, resolveMention, resolvePageEntities } from "../_shared/entities.ts";
@@ -475,10 +477,20 @@ export function v3Share(
       await tx.execute(sql`update mem_pages set visibility = ${args.to.visibility}::mem_page_visibility where id = ${args.pageRef}::uuid`);
     } else {
       await assertAccess(sub, { pageId: args.pageRef }, { write: true });
-      const baseId = one<{ base_id: string }>(await tx.execute(sql`select base_id from mem_pages where id = ${args.pageRef}::uuid`)).base_id;
+      const page = one<{ base_id: string; base_name: string }>(await tx.execute(sql`
+        select b.id as base_id, b.name as base_name from mem_pages p
+        join mem_bases b on b.id = p.base_id where p.id = ${args.pageRef}::uuid`));
+      // `user` = email OU sub. Un email résout via le flux d'invitation partagé
+      // (provisionne le compte au besoin + envoie l'invitation) — comble le manque
+      // email→sub commun aux grants de partage de page (issue #71).
+      let userId = args.to.user.trim();
+      if (userId.includes("@")) {
+        await assertWithinLimit(sub, "invite"); // peut provisionner + envoyer un mail
+        userId = (await ensureAccount(userId, { scope: "workspace", targetName: page.base_name, inviterSub: sub })).sub;
+      }
       await tx.execute(sql`
         insert into mem_page_grants (base_id, page_id, user_id, mode, created_by)
-        values (${baseId}, ${args.pageRef}::uuid, ${args.to.user}, ${args.to.mode}::mem_grant_mode, ${sub})
+        values (${page.base_id}, ${args.pageRef}::uuid, ${userId}, ${args.to.mode}::mem_grant_mode, ${sub})
         on conflict (page_id, user_id) do update set mode = excluded.mode`);
     }
     return { ok: true as const };

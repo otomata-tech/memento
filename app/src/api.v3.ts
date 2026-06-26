@@ -55,6 +55,19 @@ export interface Digest {
 }
 export type GetInclude = "children" | "backlinks" | "sources";
 
+// ── Admin org/équipe (verbe unique `admin`, issue #71) ────────────────────────
+export type OrgRole = "admin" | "member";
+export interface OrgMember { userId: string; email: string | null; role: string; pending: boolean }
+export interface AdminOrg {
+  id: string; slug: string; name: string; myRole: string | null; personal: boolean;
+  base: { id: string; name: string } | null;
+  members: OrgMember[];
+}
+export interface InviteResult {
+  orgSlug: string; email: string; role: string;
+  provisioned: boolean; emailSent: boolean; inviteLink: string | null;
+}
+
 // ── Op du change-set (sous-ensemble utile à l'UI : create/update/set_visibility) ──
 export type ProposeOp =
   | { op: "create_page"; payload: { parentId: string | null; title: string; description: string; body?: string } }
@@ -108,4 +121,20 @@ export const apiV3 = {
     post<{ status: string }>("/review", { ingestionId, decision, reviewNote }),
   share: (pageRef: string, to: { visibility: Visibility } | { user: string; mode: GrantMode }) =>
     post<{ ok: true }>("/share", { pageRef, to }),
+
+  // ── Admin org/équipe (verbe unique `admin`) ─────────────────────────────────
+  admin: {
+    orgs: () => post<{ orgs: AdminOrg[] }>("/admin", { action: "orgs" }).then((r) => r.orgs),
+    createOrg: (name: string, opts: { slug?: string; baseName?: string } = {}) =>
+      post<{ slug: string; name: string; myRole: string; baseId: string; baseName: string }>(
+        "/admin", { action: "create_org", name, ...opts }),
+    renameBase: (baseId: string, name: string) =>
+      post<{ baseId: string; name: string }>("/admin", { action: "rename_base", baseId, name }),
+    invite: (orgSlug: string, email: string, role: OrgRole = "member") =>
+      post<InviteResult>("/admin", { action: "invite_member", orgSlug, email, role }),
+    setRole: (orgSlug: string, userId: string, role: OrgRole) =>
+      post<{ orgSlug: string; userId: string; role: string }>("/admin", { action: "set_role", orgSlug, userId, role }),
+    removeMember: (orgSlug: string, userId: string) =>
+      post<{ removed: string; orgSlug: string }>("/admin", { action: "remove_member", orgSlug, userId }),
+  },
 };

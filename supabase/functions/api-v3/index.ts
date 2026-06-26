@@ -18,6 +18,7 @@ import {
   v3Apply, v3Bases, v3Count, v3Digest, v3Get, v3List, v3Load,
   v3ProposeChanges, v3ReviewIngestion, v3Search, v3Share,
 } from "../mcp/v3.ts";
+import { v3Admin } from "../mcp/v3_admin.ts";
 
 const CORS = { "access-control-allow-origin": "*" } as const;
 
@@ -132,6 +133,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
           break;
         case "share":
           result = await v3Share(sub, body);
+          break;
+        case "admin":
+          result = await v3Admin(sub, body);
           break;
         default:
           return jsonResponse({ error: `unknown verb: ${verb}` }, 404);

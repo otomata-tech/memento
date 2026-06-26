@@ -10,30 +10,12 @@ import { db, orgs, memberships, workspaces, workspaceGrants, documents, sections
 import { AccessError, accessibleWorkspaceIds } from "./access.ts";
 import { slugify } from "./write.ts";
 import { assertWithinLimit } from "./ratelimit.ts";
-import { emailConfigured, sendEmail } from "./email/resend.ts";
-import { invitationEmail } from "./email/templates.ts";
+// Machinerie de comptes/invitations (neutre du schéma) → _shared/accounts.ts, partagée v2/v3.
+import {
+  emailsFor, subForEmail, generateInviteLink, deliverInvite, ensureAccount,
+} from "./accounts.ts";
 
 const ROLES = ["admin", "curator", "member"];
-
-async function emailsFor(subs: string[]): Promise<Map<string, { email: string; pending: boolean }>> {
-  if (!subs.length) return new Map();
-  const list = sql.join(subs.map((s) => sql`${s}`), sql`, `);
-  const rows = await db.execute<{ id: string; email: string; signed: boolean }>(
-    sql`select id::text as id, email, (last_sign_in_at is not null) as signed
-        from auth.users where id::text in (${list})`,
-  );
-  // pending = provisioned account (invitation) that has never signed in.
-  return new Map([...rows].map((r) => [r.id, { email: r.email, pending: !r.signed }]));
-}
-
-async function subForEmail(email: string): Promise<string> {
-  const rows = await db.execute<{ id: string }>(
-    sql`select id::text as id from auth.users where email = ${email} limit 1`,
-  );
-  const id = rows[0]?.id;
-  if (!id) throw new Error(`No Supabase account for "${email}" (the user must have signed in at least once)`);
-  return id;
-}
 
 async function orgBySlug(slug: string) {
   const [o] = await db.select().from(orgs).where(eq(orgs.slug, slug)).limit(1);
@@ -51,8 +33,10 @@ async function assertOrgAdmin(sub: string, orgId: string): Promise<void> {
   if ((await roleOf(sub, orgId)) !== "admin") throw new AccessError("org admins only");
 }
 
-/** email→sub resolution for the other services (grants). */
-export const emailsForSubs = emailsFor;
+// email↔sub & invitation flow vivent dans accounts.ts ; ré-exportés ici pour les
+// consommateurs historiques (grants.ts, api/index.ts) — surface inchangée.
+export { emailsForSubs } from "./accounts.ts";
+export { ensureAccount };
 
 /**
  * User's personal org ("Alexis's Workspace", issue #60) — auto-provisioned on
@@ -162,78 +146,6 @@ export async function listMyOrgs(sub: string) {
   };
 }
 
-function gotrueEnv() {
-  const url = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  if (!url || !key) throw new Error("invitation unavailable (service_role missing)");
-  // The invitee lands on the APP (me.mento.cc), not on the MCP subdomain.
-  const appUrl = Deno.env.get("MEMENTO_APP_URL");
-  if (!appUrl) throw new Error("MEMENTO_APP_URL missing (invitation redirect)");
-  const redirectTo = `${appUrl}/callback`;
-  const headers = { "content-type": "application/json", apikey: key, Authorization: `Bearer ${key}` };
-  return { url, headers, redirectTo };
-}
-
-/**
- * Provisions the account (if needed) AND returns the GoTrue action link WITHOUT sending
- * an email — Memento sends it itself via Resend (see deliverInvite). For an already
- * existing account, `type=magiclink`; otherwise `invite`.
- */
-async function generateInviteLink(email: string, existing = false): Promise<{ sub: string; link: string }> {
-  const { url, headers, redirectTo } = gotrueEnv();
-  const res = await fetch(`${url}/auth/v1/admin/generate_link`, {
-    method: "POST", headers,
-    body: JSON.stringify({ type: existing ? "magiclink" : "invite", email, redirect_to: redirectTo }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    console.error("[invite] GoTrue generate_link failure:", res.status, data);
-    throw new Error("link generation failed");
-  }
-  const link = data.action_link ?? data.properties?.action_link;
-  const sub = data.user?.id ?? data.id;
-  if (!link || !sub) throw new Error("unexpected generate_link response");
-  return { sub, link };
-}
-
-/** Invitation metadata to enrich the email (targeted org/KB, role, inviter). */
-export interface InviteMeta {
-  scope: "org" | "workspace";
-  targetName: string;
-  role?: string;
-  inviterSub?: string;
-}
-
-/**
- * Sends the invitation email via Resend for an already generated action link. If the
- * provider is not configured or fails, falls back to the link to be passed along by
- * hand (the admin copies it from the UI) — no loss of functionality.
- */
-async function deliverInvite(
-  email: string,
-  link: string,
-  meta?: InviteMeta,
-): Promise<{ emailSent: boolean; inviteLink: string | null }> {
-  if (!emailConfigured()) return { emailSent: false, inviteLink: link };
-  let inviterEmail: string | null = null;
-  if (meta?.inviterSub) {
-    inviterEmail = (await emailsFor([meta.inviterSub])).get(meta.inviterSub)?.email ?? null;
-  }
-  try {
-    const msg = invitationEmail({
-      link,
-      scope: meta?.scope ?? "org",
-      targetName: meta?.targetName ?? "Memento",
-      role: meta?.role,
-      inviterEmail,
-    });
-    await sendEmail({ ...msg, to: email });
-    return { emailSent: true, inviteLink: null };
-  } catch (_e) {
-    return { emailSent: false, inviteLink: link };
-  }
-}
-
 /**
  * Invites a member. Existing account → role added/updated (no email). New account →
  * provisioned + invitation email sent by Memento via Resend; if the provider is
@@ -256,23 +168,6 @@ export async function inviteMember(sub: string, args: { orgSlug: string; email: 
   };
 }
 
-/**
- * Account for this email — existing as-is, otherwise provisioned (GoTrue, no email)
- * + invitation email sent by Memento via Resend (fallback: link to pass along).
- * Shared building block for orgs / grants: ONE invitation flow, two landings
- * (membership or grant). `meta` enriches the email (org/KB, role, inviter).
- */
-export async function ensureAccount(
-  email: string,
-  meta?: InviteMeta,
-): Promise<{ sub: string; provisioned: boolean; emailSent: boolean; inviteLink: string | null }> {
-  let existing: string | null = null;
-  try { existing = await subForEmail(email); } catch { existing = null; }
-  if (existing) return { sub: existing, provisioned: false, emailSent: false, inviteLink: null };
-  const { sub, link } = await generateInviteLink(email);
-  const { emailSent, inviteLink } = await deliverInvite(email, link, meta);
-  return { sub, provisioned: true, emailSent, inviteLink };
-}
 
 /**
  * Resends an invitation to a member who has never signed in (pending): magic link

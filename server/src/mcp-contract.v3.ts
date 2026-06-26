@@ -102,6 +102,19 @@ export type Share = (args: {
   to: { visibility: Visibility } | { user: string; mode: Mode };
 }) => Promise<{ ok: true }>;
 
+// ── admin : verbe UNIQUE hors noyau (gestion org/équipe, issues #71/#31) ──────
+// Un seul verbe `admin({action, …})` pour tenir le budget de surface (#31). 1 org =
+// 1 base (ADR 0003) → `create_org` crée la base d'office, seul `rename_base` subsiste.
+// Rôles = admin|member. `invite_member` résout l'email→sub (flux d'invitation partagé).
+export type AdminArgs =
+  | { action: "orgs" } // lecture : orgs de l'appelant + membres + base (alimente la vue Org)
+  | { action: "create_org"; name: string; slug?: string; baseName?: string }
+  | { action: "rename_base"; baseId: string; name: string }
+  | { action: "invite_member"; orgSlug: string; email: string; role?: "admin" | "member" }
+  | { action: "set_role"; orgSlug: string; userId: string; role: "admin" | "member" }
+  | { action: "remove_member"; orgSlug: string; userId: string };
+export type Admin = (args: AdminArgs) => Promise<unknown>;
+
 // ── Le noyau (8) ─────────────────────────────────────────────────────────────
 export interface McpCoreV3 {
   load: Load;
