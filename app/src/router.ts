@@ -31,6 +31,7 @@ const routes: RouteRecordRaw[] = [
       { path: "search", component: () => import("./views/v3/SearchView.vue") },
       { path: "inbox", component: () => import("./views/v3/InboxView.vue") },
       { path: "org", component: () => import("./views/v3/OrgView.vue") },
+      { path: "connector", component: () => import("./views/v3/ConnectorView.vue") },
     ],
   },
   // Public gallery: directory + search of public KBs (no account)

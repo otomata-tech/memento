@@ -42,6 +42,7 @@ async function signOut() {
         <router-link to="/v3/search" active-class="on">Recherche</router-link>
         <router-link to="/v3/inbox" active-class="on">Boîte de réception</router-link>
         <router-link to="/v3/org" active-class="on">Organisation</router-link>
+        <router-link to="/v3/connector" active-class="on">Connecteur</router-link>
       </nav>
       <button class="signout" @click="signOut">Déconnexion</button>
     </header>
