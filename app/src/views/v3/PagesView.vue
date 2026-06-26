@@ -1,36 +1,68 @@
 <script setup lang="ts">
 /**
- * Memento V3 — lecteur de pages (cœur lecture).
- * Panneau gauche : guide + arbre des pages + entités saillantes.
- * Panneau droit : page sélectionnée (markdown), sources, entités, sous-pages.
+ * Memento V3 — viewer de pages ADAPTATIF (cœur lecture).
+ *
+ * Deux dispositions de navigation, choisies selon la TAILLE de la base :
+ *  - **Rail** (petites/moyennes KB) : arbre repliable à gauche + lecteur à droite.
+ *  - **Colonnes** (grandes/profondes KB) : navigation Miller (colonnes en cascade le long
+ *    du chemin de la page active) + lecteur à droite — garde le contexte de profondeur.
+ * Mode effectif `auto` par défaut : > RAIL_MAX pages ⇒ colonnes, sinon rail. Un switch
+ * manuel (Auto/Rail/Colonnes) force la disposition ; le choix est persisté (localStorage).
+ *
+ * Le LECTEUR (PageReader) est partagé par les deux modes. Les colonnes dérivent du chemin
+ * de la page active (route-driven) → pas d'état de sélection en double.
  *
  * Sert 2 routes : `/v3` (pas de page → invite) et `/v3/page/:id` (page rendue).
  * Code contre le contrat figé `../../api.v3`.
  */
 import { ref, computed, watch, defineComponent, h, type PropType, type Component, type VNode } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { apiV3 } from "../../api.v3";
-import type { TreeNode, PageDetail, EntityRef, EntityType, LoadResult } from "../../api.v3";
-import { currentBase } from "../../v3/base";
+import type { TreeNode, PageDetail, LoadResult } from "../../api.v3";
+import { currentBase, currentBaseRef } from "../../v3/base";
+import PageReader from "./PageReader.vue";
 
 const route = useRoute();
 const router = useRouter();
 
-// ── État épine (load) ─────────────────────────────────────────────────────────
+// ── Disposition adaptative ──────────────────────────────────────────────────────
+// Au-delà de ce nombre de pages, `auto` bascule rail → colonnes (un arbre plat devient
+// peu lisible ; la navigation Miller garde le contexte sur les arbres profonds).
+const RAIL_MAX = 40;
+type ViewMode = "auto" | "rail" | "colonnes";
+const VIEWMODE_LS = "memento.v3.viewmode";
+const MODES: { v: ViewMode; label: string }[] = [
+  { v: "auto", label: "Auto" }, { v: "rail", label: "Rail" }, { v: "colonnes", label: "Colonnes" },
+];
+const mode = ref<ViewMode>((localStorage.getItem(VIEWMODE_LS) as ViewMode) || "auto");
+function setMode(m: ViewMode) {
+  mode.value = m;
+  localStorage.setItem(VIEWMODE_LS, m);
+}
+
+// ── État épine (load) + page courante (getPage) ───────────────────────────────
 const loadData = ref<LoadResult | null>(null);
 const loadError = ref<string | null>(null);
 const loadingTree = ref(false);
-
-// ── État page courante (getPage) ──────────────────────────────────────────────
 const page = ref<PageDetail | null>(null);
 const pageError = ref<string | null>(null);
 const loadingPage = ref(false);
 
 const activeId = computed(() => (route.params.id as string | undefined) ?? null);
 
-// ── Chargement de l'épine (arbre + guide + entités) ───────────────────────────
+// Nombre total de pages accessibles (indépendant de la profondeur chargée) = la mesure
+// de taille qui pilote `auto`.
+const pageCount = computed(() => loadData.value?.counts.pages ?? 0);
+const effMode = computed<"rail" | "colonnes">(() =>
+  mode.value === "auto" ? (pageCount.value > RAIL_MAX ? "colonnes" : "rail") : mode.value,
+);
+const effMeta = computed(
+  () => `${mode.value === "auto" ? "Auto" : "Manuel"} · ${effMode.value === "rail" ? "Rail" : "Colonnes"} · ${pageCount.value} p.`,
+);
+
+// ── Chargements ───────────────────────────────────────────────────────────────
+// Profondeur 4 (max du contrat) : nourrit la navigation Miller sans re-fetch et
+// donne un arbre plus complet au mode rail.
 async function loadTree() {
   if (!currentBase.value) {
     loadData.value = null;
@@ -40,7 +72,7 @@ async function loadTree() {
   loadingTree.value = true;
   loadError.value = null;
   try {
-    loadData.value = await apiV3.load(currentBase.value);
+    loadData.value = await apiV3.load(currentBase.value, 4);
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e);
     loadData.value = null;
@@ -49,7 +81,6 @@ async function loadTree() {
   }
 }
 
-// ── Chargement de la page ─────────────────────────────────────────────────────
 async function loadPage(id: string | null) {
   if (!id) {
     page.value = null;
@@ -75,25 +106,39 @@ function openPage(id: string) {
   router.push(`/v3/page/${id}`);
 }
 
-// ── Rendu markdown sécurisé ───────────────────────────────────────────────────
-const renderedBody = computed(() => {
-  if (!page.value?.body) return "";
-  const html = marked.parse(page.value.body) as string;
-  return DOMPurify.sanitize(html);
-});
-
-// ── Badges entités ────────────────────────────────────────────────────────────
-const ENTITY_LABELS: Record<EntityType, string> = {
-  personne: "Personne",
-  entreprise: "Entreprise",
-  outil: "Outil",
-  decision: "Décision",
-};
-function entityClass(type: EntityType): string {
-  return `badge badge-${type}`;
+// ── Navigation Miller (colonnes) ──────────────────────────────────────────────
+// Chemin racine→page active (inclus) dans l'arbre courant ; les colonnes en dérivent.
+function pathTo(nodes: TreeNode[], id: string): TreeNode[] | null {
+  for (const n of nodes) {
+    if (n.id === id) return [n];
+    if (n.children?.length) {
+      const sub = pathTo(n.children, id);
+      if (sub) return [n, ...sub];
+    }
+  }
+  return null;
 }
+const colPathNodes = computed<TreeNode[]>(() => {
+  const id = activeId.value;
+  if (!id || !loadData.value) return [];
+  return pathTo(loadData.value.tree, id) ?? [];
+});
+interface Column { label: string; nodes: TreeNode[]; activeId: string | null }
+const columns = computed<Column[]>(() => {
+  const data = loadData.value;
+  if (!data) return [];
+  const path = colPathNodes.value;
+  const cols: Column[] = [{ label: "Sections", nodes: data.tree, activeId: path[0]?.id ?? null }];
+  for (let i = 0; i < path.length; i++) {
+    const n = path[i];
+    if (n.children?.length) cols.push({ label: "Sous-pages", nodes: n.children, activeId: path[i + 1]?.id ?? null });
+  }
+  return cols;
+});
+const baseShort = computed(() => (currentBaseRef()?.name ?? "").split(" — ")[0]);
+const breadcrumb = computed(() => colPathNodes.value.map((n) => n.title || "(sans titre)"));
 
-// ── Composant récursif d'arbre (render function locale) ───────────────────────
+// ── Composant récursif d'arbre (mode rail) ────────────────────────────────────
 const TreeItem = defineComponent({
   name: "TreeItem",
   props: {
@@ -158,122 +203,172 @@ const TreeItem = defineComponent({
 
 <template>
   <div class="pages-view">
-    <!-- Panneau gauche : arbre fixe -->
-    <aside class="tree-pane">
-      <div v-if="loadingTree" class="muted small">Chargement…</div>
-      <div v-else-if="loadError" class="error small">{{ loadError }}</div>
-      <div v-else-if="!currentBase" class="muted small">Aucune base sélectionnée.</div>
-      <template v-else-if="loadData">
-        <p v-if="loadData.guide" class="guide">{{ loadData.guide }}</p>
-
-        <nav class="tree">
-          <TreeItem
-            v-for="node in loadData.tree"
-            :key="node.id"
-            :node="node"
-            :active-id="activeId"
-            @select="openPage"
-          />
-          <p v-if="!loadData.tree.length" class="muted small">Aucune page.</p>
-        </nav>
-
-        <div v-if="loadData.topEntities.length" class="top-entities">
-          <h3 class="section-title">Entités saillantes</h3>
-          <ul class="entity-list">
-            <li v-for="ent in loadData.topEntities" :key="ent.id">
-              <span :class="entityClass(ent.type)">{{ ENTITY_LABELS[ent.type] }}</span>
-              <span class="entity-label">{{ ent.label }}</span>
-            </li>
-          </ul>
-        </div>
-
-        <div class="counts muted small">
-          {{ loadData.counts.pages }} pages · {{ loadData.counts.entities }} entités ·
-          {{ loadData.counts.sources }} sources
-        </div>
-      </template>
-    </aside>
-
-    <!-- Panneau droit : lecteur -->
-    <main class="reader-pane">
-      <div v-if="!activeId" class="placeholder">
-        <p>Choisis une page dans l'arbre pour la lire.</p>
+    <!-- ── Barre de disposition (mode adaptatif + switch manuel) ── -->
+    <div class="viewbar">
+      <span class="meta mono">{{ effMeta }}</span>
+      <div class="seg" role="group" aria-label="Disposition">
+        <span class="seg-label mono">Vue</span>
+        <button
+          v-for="m in MODES"
+          :key="m.v"
+          type="button"
+          class="seg-btn"
+          :class="{ on: mode === m.v }"
+          @click="setMode(m.v)"
+        >
+          {{ m.label }}
+        </button>
       </div>
+    </div>
 
-      <div v-else-if="loadingPage" class="placeholder muted">Chargement de la page…</div>
+    <!-- États globaux -->
+    <div v-if="loadingTree" class="pane-state muted small">Chargement…</div>
+    <div v-else-if="loadError" class="pane-state error small">{{ loadError }}</div>
+    <div v-else-if="!currentBase" class="pane-state muted small">Aucune base sélectionnée.</div>
 
-      <div v-else-if="pageError" class="placeholder error">
-        <p>Impossible de charger la page.</p>
-        <p class="small">{{ pageError }}</p>
+    <!-- ════════ MODE RAIL ════════ -->
+    <div v-else-if="effMode === 'rail'" class="pane-row">
+      <aside class="tree-pane">
+        <template v-if="loadData">
+          <p v-if="loadData.guide" class="guide">{{ loadData.guide }}</p>
+
+          <nav class="tree">
+            <TreeItem
+              v-for="node in loadData.tree"
+              :key="node.id"
+              :node="node"
+              :active-id="activeId"
+              @select="openPage"
+            />
+            <p v-if="!loadData.tree.length" class="muted small">Aucune page.</p>
+          </nav>
+
+          <div class="counts muted small">
+            {{ loadData.counts.pages }} pages · {{ loadData.counts.entities }} entités ·
+            {{ loadData.counts.sources }} sources
+          </div>
+        </template>
+      </aside>
+
+      <PageReader
+        :page="page"
+        :loading="loadingPage"
+        :error="pageError"
+        :has-selection="!!activeId"
+        @open="openPage"
+      />
+    </div>
+
+    <!-- ════════ MODE COLONNES (Miller) ════════ -->
+    <div v-else class="pane-row cols-mode">
+      <div class="crumbs mono">
+        <span class="crumb-base">{{ baseShort }}</span>
+        <template v-for="(c, i) in breadcrumb" :key="i">
+          <span class="crumb-sep">▸</span>
+          <span class="crumb">{{ c }}</span>
+        </template>
       </div>
-
-      <div v-else-if="!page" class="placeholder muted">Page introuvable.</div>
-
-      <article v-else class="page">
-        <div class="breadcrumb small muted">
-          <span class="status-pill">{{ page.status }}</span>
-          <span class="visibility-pill">{{ page.visibility }}</span>
-          <span v-if="page.occurred_at">· {{ page.occurred_at }}</span>
+      <div class="cols-body">
+        <div v-if="loadData" class="cols">
+          <div v-for="(col, ci) in columns" :key="ci" class="col">
+            <div class="col-head mono">{{ col.label }}</div>
+            <button
+              v-for="n in col.nodes"
+              :key="n.id"
+              type="button"
+              class="col-row"
+              :class="{ on: n.id === col.activeId }"
+              :title="n.description || n.title"
+              @click="openPage(n.id)"
+            >
+              <span class="col-title">{{ n.title || "(sans titre)" }}</span>
+              <span v-if="n.children?.length" class="col-chev">›</span>
+              <span v-if="n.children?.length" class="col-meta mono">{{ n.children.length }} sous-pages</span>
+            </button>
+            <p v-if="!col.nodes.length" class="muted small col-empty">Vide.</p>
+          </div>
         </div>
-
-        <h1 class="title">{{ page.title }}</h1>
-        <p v-if="page.description" class="chapo">{{ page.description }}</p>
-
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div v-if="page.body" class="prose" v-html="renderedBody"></div>
-
-        <!-- Sous-pages -->
-        <section v-if="page.children?.length" class="block">
-          <h2 class="section-title">Sous-pages</h2>
-          <ul class="child-list">
-            <li v-for="child in page.children" :key="child.id">
-              <button type="button" class="link" @click="openPage(child.id)">{{ child.title }}</button>
-              <span v-if="child.description" class="muted small"> — {{ child.description }}</span>
-            </li>
-          </ul>
-        </section>
-
-        <!-- Sources -->
-        <section v-if="page.sources?.length" class="block">
-          <h2 class="section-title">Sources</h2>
-          <ul class="source-list">
-            <li v-for="src in page.sources" :key="src.id">
-              <a v-if="src.uri" :href="src.uri" target="_blank" rel="noopener noreferrer" class="link">{{
-                src.title || src.uri
-              }}</a>
-              <span v-else class="source-title">{{ src.title || src.kind }}</span>
-              <span v-if="src.locator" class="muted small"> ({{ src.locator }})</span>
-              <p v-if="src.citation" class="citation muted small">« {{ src.citation }} »</p>
-            </li>
-          </ul>
-        </section>
-
-        <!-- Entités -->
-        <section v-if="page.entities?.length" class="block">
-          <h2 class="section-title">Entités</h2>
-          <ul class="entity-list inline">
-            <li v-for="ent in page.entities" :key="ent.id">
-              <span :class="entityClass(ent.type)">{{ ENTITY_LABELS[ent.type] }}</span>
-              <span class="entity-label">{{ ent.label }}</span>
-            </li>
-          </ul>
-        </section>
-      </article>
-    </main>
+        <PageReader
+          :page="page"
+          :loading="loadingPage"
+          :error="pageError"
+          :has-selection="!!activeId"
+          :bordered="true"
+          @open="openPage"
+        />
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .pages-view {
   display: flex;
-  align-items: stretch;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   background: var(--color-bg, #faf9f7);
   color: var(--color-ink, #1a1a1a);
 }
 
-/* ── Panneau gauche ── */
+/* ── Barre de disposition ── */
+.viewbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--color-hair, #e5e2dc);
+  background: var(--color-surface, #fff);
+}
+.viewbar .meta {
+  font-size: 11px;
+  color: var(--color-mute, #6b6b6b);
+  white-space: nowrap;
+}
+.seg {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--color-hair, #e5e2dc);
+  background: var(--color-bg, #faf9f7);
+}
+.seg-label {
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-mute, #6b6b6b);
+  padding: 0 9px;
+  border-right: 1px solid var(--color-hair, #e5e2dc);
+}
+.seg-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border: none;
+  border-left: 1px solid var(--color-hair, #e5e2dc);
+  background: transparent;
+  color: var(--color-mute, #6b6b6b);
+  cursor: pointer;
+}
+.seg-btn:first-of-type { border-left: none; }
+.seg-btn:hover { background: var(--color-bg, #f3f1ec); }
+.seg-btn.on {
+  background: var(--color-primary, #b5532a);
+  color: var(--color-primary-ink, #fff);
+  font-weight: 600;
+}
+
+.pane-state { padding: 1.25rem 1rem; }
+.pane-row {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+/* ── Mode rail : panneau gauche ── */
 .tree-pane {
   width: 300px;
   flex: 0 0 300px;
@@ -295,10 +390,6 @@ const TreeItem = defineComponent({
   flex-direction: column;
   gap: 2px;
 }
-/* L'arbre est rendu par le composant TreeItem (fonction de rendu) → ses éléments
-   n'ont pas le data-v de ce SFC. On cible via :deep() depuis le conteneur `.tree`
-   (lui, scopé) sinon AUCUN de ces styles ne s'applique (hiérarchie plate, libellés
-   centrés par le défaut <button>). */
 .tree :deep(.children) {
   margin-left: 0.6rem;
   border-left: 1px solid var(--color-hair, #e5e2dc);
@@ -306,7 +397,7 @@ const TreeItem = defineComponent({
 }
 .tree :deep(.node-row) {
   display: flex;
-  align-items: flex-start; /* le chevron reste en haut sur un titre à 2 lignes */
+  align-items: flex-start;
   gap: 0.25rem;
   border-radius: 5px;
 }
@@ -330,7 +421,7 @@ const TreeItem = defineComponent({
   cursor: pointer;
   color: var(--color-mute, #6b6b6b);
   font-size: 0.6rem;
-  padding: 0.36rem 0 0; /* aligne le chevron sur la 1re ligne du label */
+  padding: 0.36rem 0 0;
   line-height: 1;
 }
 .tree :deep(.toggle.spacer) {
@@ -349,243 +440,103 @@ const TreeItem = defineComponent({
   color: var(--color-ink, #1a1a1a);
   padding: 0.26rem 0.3rem;
   border-radius: 4px;
-  /* titres descriptifs longs : 2 lignes max, ellipsis — compact et scannable */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-
-.top-entities {
-  margin-top: 1.5rem;
+.counts {
+  margin-top: 1.25rem;
   padding-top: 1rem;
   border-top: 1px solid var(--color-hair, #e5e2dc);
 }
-.counts {
-  margin-top: 1.25rem;
-}
 
-/* ── Panneau droit ── */
-.reader-pane {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-y: auto;
-  padding: 2.5rem 3rem;
-}
-.placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  text-align: center;
-  color: var(--color-mute, #6b6b6b);
-}
-.page {
-  max-width: 720px;
-  margin: 0 auto;
-}
-.breadcrumb {
+/* ── Mode colonnes (Miller) ── */
+.cols-mode { flex-direction: column; }
+.crumbs {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.75rem;
-}
-.status-pill,
-.visibility-pill {
-  display: inline-block;
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--color-hair, #e5e2dc);
   background: var(--color-bg, #faf9f7);
-  border: 1px solid var(--color-hair, #e5e2dc);
-  text-transform: capitalize;
-}
-.title {
-  font-family: var(--font-display, serif);
-  font-size: 2rem;
-  line-height: 1.15;
-  margin: 0 0 0.75rem;
-}
-.chapo {
-  font-size: 1.1rem;
-  line-height: 1.5;
+  font-size: 11.5px;
   color: var(--color-mute, #6b6b6b);
-  margin: 0 0 1.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-.block {
-  margin-top: 2rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--color-hair, #e5e2dc);
+.crumb-base { color: var(--color-mute, #6b6b6b); }
+.crumb-sep { color: var(--color-hair, #dccfa8); }
+.crumb { color: var(--color-ink, #2c2112); }
+.crumb:last-child { font-weight: 600; }
+.cols-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
 }
-.section-title {
-  font-family: var(--font-display, serif);
-  font-size: 0.95rem;
+.cols {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 62%;
+  overflow-x: auto;
+  min-width: 0;
+}
+.col {
+  width: 244px;
+  flex: none;
+  border-right: 1px solid var(--color-hair, #e5e2dc);
+  overflow-y: auto;
+  background: var(--color-surface, #fff);
+}
+.col-head {
+  padding: 11px 14px 7px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
   color: var(--color-mute, #6b6b6b);
-  margin: 0 0 0.75rem;
 }
-.child-list,
-.source-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-.citation {
-  margin: 0.25rem 0 0;
-  font-style: italic;
-}
-.link {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  color: var(--color-primary, #b5532a);
-  cursor: pointer;
-  text-decoration: none;
-}
-.link:hover {
-  text-decoration: underline;
-}
-.source-title {
-  font-weight: 500;
-}
-
-/* ── Entités / badges ── */
-.entity-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-.entity-list.inline {
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 0.6rem;
-}
-.entity-list li {
-  display: flex;
+.col-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 0.4rem;
-  font-size: 0.85rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
+  padding: 9px 13px;
+  cursor: pointer;
+  font: inherit;
 }
-.entity-label {
+.col-row:hover { background: var(--color-bg, #f3f1ec); }
+.col-row.on {
+  border-left-color: var(--color-primary, #b5532a);
+  background: color-mix(in srgb, var(--color-primary, #b5532a) 10%, transparent);
+}
+.col-title {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--color-ink, #2c2112);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  white-space: nowrap;
+.col-row.on .col-title { font-weight: 600; color: var(--color-primary, #b5532a); }
+.col-chev { color: var(--color-mute, #6b6b6b); font-size: 14px; padding-left: 6px; }
+.col-meta {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  color: var(--color-mute, #6b6b6b);
+  margin-top: 2px;
 }
-.badge-personne {
-  background: #e8f0fb;
-  color: #2c5d9b;
-}
-.badge-entreprise {
-  background: #eaf5ec;
-  color: #2f7d46;
-}
-.badge-outil {
-  background: #f3edfb;
-  color: #6b46a8;
-}
-.badge-decision {
-  background: #fbeede;
-  color: #b5532a;
-}
+.col-empty { padding: 9px 14px; }
 
 /* ── Utilitaires ── */
-.muted {
-  color: var(--color-mute, #6b6b6b);
-}
-.small {
-  font-size: 0.8rem;
-}
-.error {
-  color: #b3261e;
-}
-
-/* ── Prose markdown ── */
-.prose {
-  font-size: 1rem;
-  line-height: 1.65;
-}
-.prose :deep(h1),
-.prose :deep(h2),
-.prose :deep(h3) {
-  font-family: var(--font-display, serif);
-  line-height: 1.25;
-  margin: 1.6rem 0 0.6rem;
-}
-.prose :deep(h2) {
-  font-size: 1.4rem;
-}
-.prose :deep(h3) {
-  font-size: 1.15rem;
-}
-.prose :deep(p) {
-  margin: 0 0 1rem;
-}
-.prose :deep(a) {
-  color: var(--color-primary, #b5532a);
-}
-.prose :deep(ul),
-.prose :deep(ol) {
-  padding-left: 1.4rem;
-  margin: 0 0 1rem;
-}
-.prose :deep(li) {
-  margin: 0.25rem 0;
-}
-.prose :deep(blockquote) {
-  margin: 1rem 0;
-  padding-left: 1rem;
-  border-left: 3px solid var(--color-hair, #e5e2dc);
-  color: var(--color-mute, #6b6b6b);
-}
-.prose :deep(code) {
-  background: var(--color-bg, #faf9f7);
-  border: 1px solid var(--color-hair, #e5e2dc);
-  border-radius: 4px;
-  padding: 0.1rem 0.3rem;
-  font-size: 0.9em;
-}
-.prose :deep(pre) {
-  background: var(--color-bg, #faf9f7);
-  border: 1px solid var(--color-hair, #e5e2dc);
-  border-radius: 6px;
-  padding: 1rem;
-  overflow-x: auto;
-}
-.prose :deep(pre code) {
-  background: none;
-  border: none;
-  padding: 0;
-}
-.prose :deep(img) {
-  max-width: 100%;
-}
-.prose :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 0 0 1rem;
-}
-.prose :deep(th),
-.prose :deep(td) {
-  border: 1px solid var(--color-hair, #e5e2dc);
-  padding: 0.4rem 0.6rem;
-  text-align: left;
-}
+.mono { font-family: var(--font-mono, ui-monospace, monospace); }
+.muted { color: var(--color-mute, #6b6b6b); }
+.small { font-size: 0.8rem; }
+.error { color: #b3261e; }
 </style>
