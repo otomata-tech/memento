@@ -93,13 +93,17 @@ jobs:
       # Apply the v3 migration lineage (supabase/migrations) directly with psql — the
       # same recipe as the disposable pgvector container in CLAUDE.md. The extensions it
       # uses (pgcrypto/pg_trgm/vector/unaccent) ship with the pgvector image; no pg_cron.
-      - name: Provision v3 schema (supabase/migrations)
+      - name: Provision v3 schema (supabase/migrations + auth.users stub)
         run: |
           command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
           for f in supabase/migrations/*.sql; do
             echo "applying $f"
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
           done
+          # Supabase fournit `auth.users` en prod ; en CI on pose le même stub minimal
+          # que server/src/seed-auth-local.ts (colonnes lues/écrites par les tests v3).
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+            -c "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text, last_sign_in_at timestamptz);"
 
       - uses: denoland/setup-deno@v2
         with:
