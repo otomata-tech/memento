@@ -1,8 +1,11 @@
 name: Tests
 
 # Integration tests of the Edge Functions (deno test) against a real Postgres.
-# The mem_* schema is applied via the Drizzle migrations (server/drizzle, 0015 included);
-# the auth.users schema is provisioned by the tests themselves (cf. seedUser).
+# v2 and v3 use SEPARATE, COLLIDING mem_* schemas (cf. CLAUDE.md — v2 lineage =
+# server/drizzle via schema.ts ; v3 lineage = supabase/migrations). They cannot share
+# one database, so each runs in its OWN job (hence its own Postgres service):
+#   • v2-integration: drizzle push (schema.ts)            → runs the non-v3 tests.
+#   • v3-integration: applies supabase/migrations/*.sql    → runs the *.v3.test.ts.
 
 on:
   push:
@@ -19,11 +22,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  integration:
+  v2-integration:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # pgvector preinstalled: the embeddings migration (#10) runs `CREATE EXTENSION vector`.
+        # pgvector preinstalled: the embeddings migration runs `CREATE EXTENSION vector`.
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: tuls
@@ -44,11 +47,11 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 20
-      # We materialize the canonical TS schema (drizzle-kit push) rather than the SQL
-      # migration chain: the latter carries Supabase-only steps (pg_cron #0014,
-      # pgvector #0006) absent from a CI Postgres. `push` creates all the mem_*
-      # tables the tests need, without those extensions. `--force` = non-interactive.
-      - name: Provision schema (drizzle push)
+      # Materialize the canonical v2 TS schema (drizzle push from server/src/db.ts →
+      # schema.ts) rather than the SQL migration chain (which carries Supabase-only
+      # steps absent from a CI Postgres). `push` creates all the mem_* v2 tables the
+      # tests need; `--force` = non-interactive.
+      - name: Provision v2 schema (drizzle push)
         working-directory: server
         run: |
           npm ci
@@ -57,6 +60,56 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: deno test
+      # Only the non-v3 tests: the *.v3.test.ts need the v3 schema (other job).
+      # auth.users is provisioned by the tests themselves (cf. seedUser).
+      - name: deno test (v2 + hermetic)
         working-directory: supabase/functions
-        run: deno test --allow-env --allow-net --allow-read _shared/
+        run: |
+          files=$(ls _shared/*.test.ts | grep -v '\.v3\.test\.ts$' || true)
+          echo "v2/hermetic test files:"; echo "$files"
+          deno test --allow-env --allow-net --allow-read $files
+
+  v3-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+
+      # Apply the v3 migration lineage (supabase/migrations) directly with psql — the
+      # same recipe as the disposable pgvector container in CLAUDE.md. The extensions it
+      # uses (pgcrypto/pg_trgm/vector/unaccent) ship with the pgvector image; no pg_cron.
+      - name: Provision v3 schema (supabase/migrations)
+        run: |
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          for f in supabase/migrations/*.sql; do
+            echo "applying $f"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # Only the *.v3.test.ts (they self-skip without DATABASE_URL; here it is set).
+      # On a ref without any v3 test (e.g. v2-only main), skip cleanly.
+      - name: deno test (v3)
+        working-directory: supabase/functions
+        run: |
+          files=$(ls _shared/*.v3.test.ts 2>/dev/null || true)
+          if [ -z "$files" ]; then echo "no v3 tests on this ref — skipping"; exit 0; fi
+          echo "v3 test files:"; echo "$files"
+          deno test --allow-env --allow-net --allow-read $files
