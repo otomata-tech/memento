@@ -16,9 +16,9 @@ import type { SearchHit, EntityRef, Search as ContractSearch } from "../../../se
 // db chargé PARESSEUSEMENT (même pattern qu'entities.ts) : importer ce module ne doit
 // PAS exiger DATABASE_URL — seul l'appel réel à search() ouvre la connexion. Permet à
 // `deno test` de charger le module (puis skip si pas de DB) sans DATABASE_URL.
-let _db: typeof import("./db.ts").db | null = null;
+let _db: typeof import("./db.v3.ts").db | null = null;
 async function getDb() {
-  if (!_db) _db = (await import("./db.ts")).db;
+  if (!_db) _db = (await import("./db.v3.ts")).db;
   return _db;
 }
 
@@ -29,7 +29,7 @@ export interface SearchContext { sub: string | null }
 export interface SearchDeps { embedTexts: EmbedTexts }
 
 type V3SearchArgs = Parameters<ContractSearch>[0];
-type Tx = Parameters<Parameters<typeof import("./db.ts").db.transaction>[0]>[0];
+type Tx = Parameters<Parameters<typeof import("./db.v3.ts").db.transaction>[0]>[0];
 
 const RRF_K_V3 = 60;
 const SEM_OVERFETCH = 5; // sur-récupère côté kNN avant filtre d'accès (recall sous post-filtre)

@@ -382,9 +382,9 @@ const toVec = (e: number[]) => `[${e.join(",")}]`;
 
 // db chargé paresseusement : importer ce module (résolution + client NER) ne doit
 // PAS exiger DATABASE_URL — seul l'adaptateur Postgres en a besoin, au 1er appel.
-let _db: typeof import("./db.ts").db | null = null;
+let _db: typeof import("./db.v3.ts").db | null = null;
 async function getDb() {
-  if (!_db) _db = (await import("./db.ts")).db;
+  if (!_db) _db = (await import("./db.v3.ts")).db;
   return _db;
 }
 

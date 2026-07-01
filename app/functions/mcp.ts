@@ -3,4 +3,4 @@ import { proxyTo } from "./_proxy";
 
 type Ctx = { request: Request; env: { SUPABASE_URL: string } };
 export const onRequest = (ctx: Ctx): Promise<Response> =>
-  proxyTo(ctx.env.SUPABASE_URL, "/functions/v1/mcp", ctx.request, false);
+  proxyTo(ctx.env.SUPABASE_URL, "/functions/v1/mcp-v3/mcp", ctx.request, false);

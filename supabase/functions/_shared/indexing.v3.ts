@@ -13,9 +13,9 @@
 import { sql } from "drizzle-orm";
 import { EMBEDDING_MODEL, embedTexts, toVec } from "./embed.v3.ts";
 
-let _db: typeof import("./db.ts").db | null = null;
+let _db: typeof import("./db.v3.ts").db | null = null;
 async function getDb() {
-  if (!_db) _db = (await import("./db.ts")).db;
+  if (!_db) _db = (await import("./db.v3.ts")).db;
   return _db;
 }
 

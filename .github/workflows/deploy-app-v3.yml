@@ -1,13 +1,11 @@
 name: Deploy app (v3)
 
-# Build-serveur de l'app Memento V3 (SPA page-centrée) → /opt/memento-v3/dist sur
-# otomata-0, servi en statique par Caddy (+ proxy /api,/mcp,/.well-known vers le
-# projet Supabase v3). Déclenché à chaque push sur memento-v3 touchant app/.
-#
-# La clé SSH_DEPLOY_KEY est ÉPINGLÉE en forced-command sur /opt/deploy/memento-v3.sh
-# côté serveur : le `script:` ci-dessous ne fait que « sonner à la porte », toute la
-# logique (git reset origin/memento-v3 + npm build + sync atomique + smoke + rollback)
-# vit dans /opt/deploy/memento-v3.sh. Pour changer le déploiement : éditer ce script.
+# Déploie l'app v3 (SPA page-centrée + Pages Functions proxy /mcp, /api, /.well-known)
+# sur Cloudflare Pages `memento-viewer` = la PROD me.mento.cc / mcp.mento.cc.
+# ⚠️ Cutover 2026-06-28 (issue #58) : v3 est LIVE — ce workflow remplace l'ancien
+# build-serveur vers otomata-0 (memento-v3.oto.zone, staging ABANDONNÉ).
+# VITE_MEMENTO_V3=true est OBLIGATOIRE : sans lui, /home sert le viewer v2 (qui
+# appelle les endpoints v2 → 404 depuis que /api est routé vers api-v3).
 # Gated par repository_owner (un fork ne déploie pas notre prod).
 
 on:
@@ -27,11 +25,26 @@ jobs:
     if: github.repository_owner == 'otomata-tech'
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy v3 app to otomata-0
-        # Pin par SHA (un tag re-poussé = exécution arbitraire avec accès au secret).
-        uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          host: 51.15.225.121 # otomata-0 (business)
-          username: root
-          key: ${{ secrets.SSH_DEPLOY_KEY }}
-          script: deploy memento-v3 # ignoré — la clé force /opt/deploy/memento-v3.sh
+          node-version: 20
+      - name: Build
+        working-directory: app
+        env:
+          VITE_MEMENTO_V3: "true"
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # PostHog Project API Key (phc_) is publishable (write-only ingestion) → safe inline.
+          VITE_POSTHOG_KEY: phc_wYEankhdv3AnCE7JEMeiiidt6yssKXRnkAn36TpFdesC
+          VITE_POSTHOG_HOST: https://eu.i.posthog.com
+        run: |
+          npm ci
+          npm run build
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: pages deploy dist --project-name=memento-viewer --branch=main

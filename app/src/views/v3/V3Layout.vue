@@ -81,6 +81,6 @@ async function signOut() {
 .cmdk-hint:hover { border-color: var(--color-primary, #b5532a); color: var(--color-primary, #b5532a); }
 .cmdk-k { font-family: var(--font-mono, monospace); letter-spacing: 0.02em; }
 .signout { border: 1px solid var(--color-hair, #e5e2dc); background: none; color: var(--color-mute, #6b6b6b); padding: 6px 12px; font-size: 13px; cursor: pointer; }
-.content { padding: 24px 22px; max-width: 1100px; margin: 0 auto; }
+.content { padding: 24px 22px; max-width: min(1600px, 95vw); margin: 0 auto; }
 .empty { color: var(--color-mute, #6b6b6b); padding: 40px 0; text-align: center; }
 </style>

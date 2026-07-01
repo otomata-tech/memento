@@ -1,7 +1,11 @@
 name: Deploy edge functions (v3)
 
-# Déploie les Edge Functions v3 (api-v3 + mcp-v3) sur le projet Supabase BLUE-GREEN
-# v3 (ref hhvjbnhpjpxuicgviutt) à chaque push sur la branche memento-v3.
+# Déploie les Edge Functions v3 (api-v3 + mcp-v3) sur le projet Supabase de PROD
+# mento.cc (ref doebdriroupduqpggcsj) à chaque push sur la branche memento-v3.
+# ⚠️ Cutover 2026-06-28 (issue #58) : v3 est LIVE en prod, consolidé in-project —
+# les tables v3 vivent dans le schéma `memento_v3` de ce projet (db.v3.ts pose le
+# search_path), v2 reste dans `public` jusqu'à son retrait. L'ancien projet
+# blue-green hhvjbnhpjpxuicgviutt est ABANDONNÉ — ne plus rien y déployer.
 # PAS de migration DB ici (les migrations v3 sont sensibles → appliquées à la main).
 # Gated par repository_owner (un fork ne déploie pas notre prod).
 #
@@ -24,7 +28,7 @@ jobs:
     if: github.repository_owner == 'otomata-tech'
     runs-on: ubuntu-latest
     env:
-      SUPABASE_PROJECT_REF: hhvjbnhpjpxuicgviutt # projet v3 (blue-green) — ref publique
+      SUPABASE_PROJECT_REF: doebdriroupduqpggcsj # projet PROD mento.cc (cutover #58) — ref publique
     steps:
       - uses: actions/checkout@v6
       - uses: supabase/setup-cli@v2

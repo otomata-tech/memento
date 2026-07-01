@@ -20,10 +20,10 @@
 import { sql } from "drizzle-orm";
 // db chargé paresseusement : importer ce module ne doit PAS exiger DATABASE_URL
 // (aligné sur entities.ts) → toute la surface v3 reste importable/testable sans DB.
-type Db = typeof import("./db.ts").db;
+type Db = typeof import("./db.v3.ts").db;
 let _db: Db | null = null;
 async function getDb(): Promise<Db> {
-  if (!_db) _db = (await import("./db.ts")).db;
+  if (!_db) _db = (await import("./db.v3.ts")).db;
   return _db;
 }
 

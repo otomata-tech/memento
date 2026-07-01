@@ -16,7 +16,7 @@
  * est explicite (`assertOrgAdmin`), comme l'admin v2.
  */
 import { sql } from "drizzle-orm";
-import { db } from "./db.ts";
+import { db } from "./db.v3.ts";
 import { AccessError } from "./access.v3.ts";
 import { slugify } from "./write.ts";
 import { assertWithinLimit } from "./ratelimit.ts";
