@@ -4,17 +4,17 @@
  * Ouvert depuis le lecteur (PageReader) : règle la visibilité (privé/org/public),
  * invite un utilisateur par email (lecture/écriture), copie le lien de la page.
  *
- * Ne fait QUE ce que l'API expose (`apiV3.share`) :
- *  - visibilité  → share(pageId, { visibility })
- *  - invitation  → share(pageId, { user: email, mode })
- * ⚠️ Pas de liste « Qui a accès » ni de révocation : l'API ne les expose pas encore
- *    (cf. apiGaps). Le panneau ne simule rien.
+ * Fait (issue #73) :
+ *  - visibilité   → share(pageId, { visibility })
+ *  - invitation   → share(pageId, { user: email, mode }) + écho `resolved` (flash exact)
+ *  - Qui a accès  → get(include:'grants') : liste + changement de mode + révocation
+ *                   (share({ mode:'none' })). `grants=null` ⟹ pas d'autorité de gestion.
  *
  * Passer en PUBLIC est un geste sensible (CDC §6) → confirmation explicite avant l'appel.
  * Présentation alignée sur les vues v3 (mêmes tokens, .btn/.primary/.ghost), styles scoped.
  */
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
-import { apiV3, type Visibility, type GrantMode } from "../../api.v3";
+import { apiV3, type Visibility, type GrantMode, type PageGrant } from "../../api.v3";
 
 const props = defineProps<{
   pageId: string;
@@ -96,16 +96,70 @@ async function inviteUser() {
   inviteBusy.value = true;
   inviteError.value = null;
   try {
-    await apiV3.share(props.pageId, { user: email, mode: inviteMode.value });
-    flash(`${email} invité·e (${inviteMode.value === "read" ? "lecture" : "écriture"}).`);
+    const { resolved } = await apiV3.share(props.pageId, { user: email, mode: inviteMode.value });
+    const acc = inviteMode.value === "read" ? "lecture" : "écriture";
+    // Flash EXACT dérivé de l'écho serveur : compte créé / invitation en attente /
+    // accès accordé à un membre existant (issue #73, plus d'optimisme aveugle).
+    if (resolved?.provisioned) flash(`${email} — compte créé, invitation envoyée (${acc}).`);
+    else if (resolved?.pending) flash(`${email} — invitation en attente, accès prêt (${acc}).`);
+    else flash(`${email} — accès accordé (${acc}).`);
     inviteEmail.value = "";
+    await loadGrants(); // le nouvel accès apparaît dans « Qui a accès »
     // Pas d'emit "updated" : une invitation ne change pas la visibilité de la page
-    // → inutile de rafraîchir le parent, et le panneau reste ouvert pour enchaîner
-    //   plusieurs invitations (le flash de succès reste visible).
+    // → le panneau reste ouvert pour enchaîner plusieurs invitations.
   } catch (e) {
     inviteError.value = e instanceof Error ? e.message : String(e);
   } finally {
     inviteBusy.value = false;
+  }
+}
+
+// ── « Qui a accès » : liste des grants + révocation / changement de mode ─────────
+// grants = null → l'appelant ne peut PAS gérer le partage (write) ; [] → personne.
+const grants = ref<PageGrant[] | null>(null);
+const grantsLoaded = ref(false);
+const grantsError = ref<string | null>(null);
+const grantBusy = ref<string | null>(null); // userId en cours de mutation
+const canManage = computed(() => grantsLoaded.value && grants.value !== null);
+
+async function loadGrants() {
+  grantsError.value = null;
+  try {
+    grants.value = await apiV3.pageGrants(props.pageId);
+  } catch (e) {
+    grantsError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    grantsLoaded.value = true;
+  }
+}
+
+async function revokeGrant(g: PageGrant) {
+  if (grantBusy.value) return;
+  grantBusy.value = g.userId;
+  grantsError.value = null;
+  try {
+    await apiV3.share(props.pageId, { user: g.userId, mode: "none" });
+    flash(`Accès retiré à ${g.email ?? g.userId}.`);
+    await loadGrants();
+  } catch (e) {
+    grantsError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    grantBusy.value = null;
+  }
+}
+
+async function changeGrantMode(g: PageGrant, mode: GrantMode) {
+  if (grantBusy.value || mode === g.mode) return;
+  grantBusy.value = g.userId;
+  grantsError.value = null;
+  try {
+    await apiV3.share(props.pageId, { user: g.userId, mode });
+    flash(`${g.email ?? g.userId} → ${mode === "read" ? "lecture" : "écriture"}.`);
+    await loadGrants();
+  } catch (e) {
+    grantsError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    grantBusy.value = null;
   }
 }
 
@@ -169,6 +223,7 @@ function onKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   previouslyFocused = document.activeElement as HTMLElement | null;
   document.addEventListener("keydown", onKeydown);
+  void loadGrants();
   await nextTick();
   focusables()[0]?.focus();
 });
@@ -252,6 +307,44 @@ onBeforeUnmount(() => {
           </button>
         </form>
         <p v-if="inviteError" class="sp-err" role="alert">{{ inviteError }}</p>
+      </section>
+
+      <!-- ── Qui a accès (liste + révocation + changement de mode) ── -->
+      <section class="sp-section">
+        <h3 class="sp-title">Qui a accès</h3>
+        <p v-if="!grantsLoaded" class="sp-state muted small">Chargement…</p>
+        <p v-else-if="grantsError" class="sp-err" role="alert">{{ grantsError }}</p>
+        <p v-else-if="!canManage" class="muted small">
+          Tu n'as pas les droits de gestion du partage de cette page.
+        </p>
+        <p v-else-if="grants && grants.length === 0" class="muted small">
+          Aucun accès individuel. La page reste visible selon sa visibilité ci-dessus.
+        </p>
+        <ul v-else class="grant-list">
+          <li v-for="g in grants" :key="g.userId" class="grant-row">
+            <span class="grant-who">
+              <span class="grant-email">{{ g.email ?? g.userId }}</span>
+              <span v-if="g.pending" class="grant-pending" title="Compte invité, jamais connecté">en attente</span>
+            </span>
+            <select
+              class="sel grant-mode"
+              :value="g.mode"
+              :disabled="grantBusy === g.userId"
+              aria-label="Niveau d'accès"
+              @change="(e) => changeGrantMode(g, (e.target as HTMLSelectElement).value as GrantMode)"
+            >
+              <option v-for="m in MODES" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </select>
+            <button
+              type="button"
+              class="btn ghost grant-revoke"
+              :disabled="grantBusy === g.userId"
+              @click="revokeGrant(g)"
+            >
+              {{ grantBusy === g.userId ? "…" : "Retirer" }}
+            </button>
+          </li>
+        </ul>
       </section>
 
       <!-- ── Lien de la page ── -->
@@ -392,6 +485,39 @@ onBeforeUnmount(() => {
   border-color: var(--color-primary, #b5532a);
 }
 .invite-form .inp { flex: 1 1 12rem; min-width: 0; }
+
+/* ── Qui a accès ── */
+.grant-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.grant-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-hair, #e5e2dc);
+  border-radius: 6px;
+  background: var(--color-bg, #faf9f7);
+}
+.grant-who { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 0.4rem; }
+.grant-email {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grant-pending {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  background: #fdf2ee;
+  color: #8a2d10;
+  border: 1px solid #e8b9a8;
+}
+.grant-mode { flex: 0 0 auto; font-size: 0.8rem; padding: 0.3rem 0.4rem; }
+.grant-revoke { flex: 0 0 auto; font-size: 0.78rem; padding: 0.3rem 0.55rem; color: var(--color-mute, #6b6b6b); }
+.grant-revoke:hover:not(:disabled) { color: #8a2d10; border-color: #e8b9a8; }
 
 /* ── Lien ── */
 .link-row { display: flex; gap: 0.4rem; }

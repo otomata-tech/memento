@@ -22,7 +22,7 @@
 import { sql } from "drizzle-orm";
 import { assertAccess, assertCanSetVisibility, withCurrentSub, AccessError, safeErrorMessage } from "../_shared/access.v3.ts";
 import { ensurePersonalBaseV3 } from "../_shared/onboarding.v3.ts";
-import { ensureAccount } from "../_shared/accounts.ts";
+import { ensureAccount, emailsFor, subForEmail } from "../_shared/accounts.ts";
 import { assertWithinLimit } from "../_shared/ratelimit.ts";
 import { search as searchV3 } from "../_shared/search.v3.ts";
 import { embedTexts } from "../_shared/embed.v3.ts";
@@ -173,6 +173,23 @@ export function v3Get(sub: string, args: { id: string; kind: "page" | "entity"; 
         out.sources = rows(await tx.execute(sql`
           select s.id, s.kind, s.title, s.uri, s.citation, ps.locator from mem_page_sources ps
           join mem_sources s on s.id = ps.source_id where ps.page_id = ${args.id}::uuid`));
+      }
+      if (include.has("grants")) {
+        // « Qui a accès » : réservé à qui peut GÉRER la page (write). Sinon `null` —
+        // ni la liste ni son vide (un [] serait un oracle « personne d'autre »).
+        const canManage = one<{ ok: boolean }>(await tx.execute(
+          sql`select page_can_write(${args.id}::uuid) as ok`))?.ok === true;
+        if (!canManage) {
+          out.grants = null;
+        } else {
+          const g = rows<{ user_id: string; mode: string }>(await tx.execute(sql`
+            select user_id, mode from mem_page_grants where page_id = ${args.id}::uuid order by created_at`));
+          const emails = await emailsFor(g.map((x) => x.user_id));
+          out.grants = g.map((x) => {
+            const info = emails.get(x.user_id);
+            return { userId: x.user_id, email: info?.email ?? null, mode: x.mode, pending: info?.pending ?? true };
+          });
+        }
       }
       return out;
     }
@@ -470,30 +487,55 @@ export function v3Digest(sub: string, args: { base?: string; sinceDays?: number 
 // ── Verbe share : par page (visibilité OU grant user) ─────────────────────────
 export function v3Share(
   sub: string, args: { pageRef: string; to: { visibility: string } | { user: string; mode: string } },
-): Promise<{ ok: true }> {
+): Promise<{ ok: true; resolved?: { userId: string; email: string | null; pending: boolean; provisioned: boolean } }> {
   return withCurrentSub(sub, async (tx) => {
     if ("visibility" in args.to) {
       await assertCanSetVisibility(sub, args.pageRef, args.to.visibility);
       await tx.execute(sql`update mem_pages set visibility = ${args.to.visibility}::mem_page_visibility where id = ${args.pageRef}::uuid`);
-    } else {
-      await assertAccess(sub, { pageId: args.pageRef }, { write: true });
-      const page = one<{ base_id: string; base_name: string }>(await tx.execute(sql`
-        select b.id as base_id, b.name as base_name from mem_pages p
-        join mem_bases b on b.id = p.base_id where p.id = ${args.pageRef}::uuid`));
-      // `user` = email OU sub. Un email résout via le flux d'invitation partagé
-      // (provisionne le compte au besoin + envoie l'invitation) — comble le manque
-      // email→sub commun aux grants de partage de page (issue #71).
-      let userId = args.to.user.trim();
-      if (userId.includes("@")) {
+      return { ok: true as const };
+    }
+    await assertAccess(sub, { pageId: args.pageRef }, { write: true });
+    const page = one<{ base_id: string; base_name: string }>(await tx.execute(sql`
+      select b.id as base_id, b.name as base_name from mem_pages p
+      join mem_bases b on b.id = p.base_id where p.id = ${args.pageRef}::uuid`));
+    const raw = args.to.user.trim();
+    const mode = args.to.mode;
+    // `user` = email OU sub. Un email résout via le flux d'invitation partagé
+    // (provisionne le compte au besoin + envoie l'invitation) — comble le manque
+    // email→sub commun aux grants de partage de page (issue #71). La RÉVOCATION
+    // (mode:'none') ne provisionne jamais : elle résout l'email sans créer de compte.
+    let userId = raw;
+    let provisioned = false;
+    if (raw.includes("@")) {
+      if (mode === "none") {
+        userId = await subForEmail(raw);
+      } else {
         await assertWithinLimit(sub, "invite"); // peut provisionner + envoyer un mail
-        userId = (await ensureAccount(userId, { scope: "workspace", targetName: page.base_name, inviterSub: sub })).sub;
+        const acc = await ensureAccount(raw, { scope: "workspace", targetName: page.base_name, inviterSub: sub });
+        userId = acc.sub;
+        provisioned = acc.provisioned;
       }
+    }
+    if (mode === "none") {
+      // Révocation : `none` n'existe pas dans l'enum DB → on SUPPRIME le grant.
+      await tx.execute(sql`
+        delete from mem_page_grants where page_id = ${args.pageRef}::uuid and user_id = ${userId}`);
+    } else {
       await tx.execute(sql`
         insert into mem_page_grants (base_id, page_id, user_id, mode, created_by)
-        values (${page.base_id}, ${args.pageRef}::uuid, ${userId}, ${args.to.mode}::mem_grant_mode, ${sub})
+        values (${page.base_id}, ${args.pageRef}::uuid, ${userId}, ${mode}::mem_grant_mode, ${sub})
         on conflict (page_id, user_id) do update set mode = excluded.mode`);
     }
-    return { ok: true as const };
+    const info = (await emailsFor([userId])).get(userId);
+    return {
+      ok: true as const,
+      resolved: {
+        userId,
+        email: info?.email ?? (raw.includes("@") ? raw : null),
+        pending: info?.pending ?? provisioned,
+        provisioned,
+      },
+    };
   });
 }
 

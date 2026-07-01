@@ -21,7 +21,7 @@ Deno.test({
   sanitizeOps: false,
 }, async () => {
   // Import APRÈS le garde : sans DATABASE_URL, v3.ts (→ db.ts) ne charge pas → test skip propre.
-  const { v3ProposeChanges, v3Apply, v3Search, v3Load, v3List, v3Get } = await import("./v3.ts");
+  const { v3ProposeChanges, v3Apply, v3Search, v3Load, v3List, v3Get, v3Share } = await import("./v3.ts");
   const sql = postgres(DB!, { prepare: false });
   const tag = `mcpv3-${crypto.randomUUID().slice(0, 8)}`;
   const sub = `${tag}-user`;
@@ -91,6 +91,33 @@ Deno.test({
     const ents = await sql`select id, type, canonical_label from mem_entities where org_id=${org.id} and type='decision'`;
     assert(ents.length >= 1, "entité decision créée");
     assert(ents.some((e) => (e.canonical_label as string).includes("pgvector")), "label de la décision");
+
+    // ── grants (#73) : share → get include grants → révocation → écho + null pour non-gestionnaire ──
+    const bob = `${tag}-bob`;
+    const shareRes = await v3Share(sub, { pageRef: pageId, to: { user: bob, mode: "read" } });
+    assert(shareRes.ok, "share grant → ok");
+    assertEquals(shareRes.resolved?.userId, bob, "écho resolved.userId = bob (sub direct)");
+    type G = { userId: string; mode: string };
+    const withGrants = await v3Get(sub, { id: pageId, kind: "page", include: ["grants"] }) as { grants: G[] | null };
+    assert(Array.isArray(withGrants.grants), "grants = liste pour le gestionnaire (owner)");
+    assert(withGrants.grants!.some((g) => g.userId === bob && g.mode === "read"), "grant bob:read listé");
+
+    // changement de mode : re-share = upsert
+    await v3Share(sub, { pageRef: pageId, to: { user: bob, mode: "write" } });
+    const afterMode = await v3Get(sub, { id: pageId, kind: "page", include: ["grants"] }) as { grants: G[] | null };
+    assert(afterMode.grants!.some((g) => g.userId === bob && g.mode === "write"), "grant bob passé en write (upsert)");
+
+    // révocation via mode:'none' → DELETE
+    const rev = await v3Share(sub, { pageRef: pageId, to: { user: bob, mode: "none" } });
+    assert(rev.ok, "révocation (mode:none) → ok");
+    const afterRevoke = await v3Get(sub, { id: pageId, kind: "page", include: ["grants"] }) as { grants: G[] | null };
+    assert(!afterRevoke.grants!.some((g) => g.userId === bob), "grant bob retiré après mode:none");
+
+    // non-gestionnaire (membre, pas owner/admin) : lit la page org mais grants = null (pas d'oracle)
+    const eve = `${tag}-eve`;
+    await sql`insert into mem_memberships (org_id, user_id, role) values (${org.id}, ${eve}, 'member')`;
+    const eveView = await v3Get(eve, { id: pageId, kind: "page", include: ["grants"] }) as { grants: unknown };
+    assertEquals(eveView.grants, null, "membre non-gestionnaire → grants null");
   } finally {
     await sql`delete from mem_bases where name=${tag}`;
     await sql`delete from mem_orgs where slug=${tag}`;

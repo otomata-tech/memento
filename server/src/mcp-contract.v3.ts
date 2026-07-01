@@ -55,7 +55,15 @@ export type Search = (args: {
 }) => Promise<SearchHit[]>;
 
 // ── get : détail page|entité (+ navigation locale) ───────────────────────────
-export type GetInclude = "children" | "backlinks" | "sources";
+// `grants` = liste « Qui a accès » (issue #73), n'est renvoyée qu'à qui peut GÉRER
+// la page (write) — sinon `null` (pas d'oracle sur les accès des autres).
+export type GetInclude = "children" | "backlinks" | "sources" | "grants";
+export interface PageGrant {
+  userId: string;
+  email: string | null;
+  mode: Mode;
+  pending: boolean; // compte provisionné (invité) jamais connecté
+}
 export type Get = (args: {
   id: string;
   kind: "page" | "entity";
@@ -97,10 +105,18 @@ export type ProposeChanges = (args: {
 export type Apply = (args: { ingestionId: string }) => Promise<{ status: string }>;
 
 // ── share : par page (visibilité OU grant user). Pas de groupes en v1 (ADR 0003) ──
+// `mode:'none'` RÉVOQUE le grant (DELETE) — `none` vit ICI (type/API), jamais dans
+// l'enum DB `grantMode` (read|write). `resolved` = écho de la résolution email→sub.
+export interface ShareResolved {
+  userId: string;
+  email: string | null;
+  pending: boolean;
+  provisioned: boolean; // compte créé à la volée par cette invitation
+}
 export type Share = (args: {
   pageRef: string;
-  to: { visibility: Visibility } | { user: string; mode: Mode };
-}) => Promise<{ ok: true }>;
+  to: { visibility: Visibility } | { user: string; mode: Mode | "none" };
+}) => Promise<{ ok: true; resolved?: ShareResolved }>;
 
 // ── admin : verbe UNIQUE hors noyau (gestion org/équipe, issues #71/#31) ──────
 // Un seul verbe `admin({action, …})` pour tenir le budget de surface (#31). 1 org =

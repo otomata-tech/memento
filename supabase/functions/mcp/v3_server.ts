@@ -57,8 +57,8 @@ export function buildV3Server(sub: string): McpServer {
   }, guarded((a) => v3Search(sub, a as any)));
 
   server.registerTool("get", {
-    description: "Détail d'une page ou d'une entité (+ navigation locale : children|backlinks|sources).",
-    inputSchema: { id: z.string(), kind: z.enum(["page", "entity"]), include: z.array(z.enum(["children", "backlinks", "sources"])).optional() },
+    description: "Détail d'une page ou d'une entité (+ navigation locale : children|backlinks|sources|grants). `grants` = liste « Qui a accès » (réservée à qui peut gérer la page ; sinon null).",
+    inputSchema: { id: z.string(), kind: z.enum(["page", "entity"]), include: z.array(z.enum(["children", "backlinks", "sources", "grants"])).optional() },
     // deno-lint-ignore no-explicit-any
   }, guarded((a) => v3Get(sub, a as any)));
 
@@ -99,10 +99,10 @@ export function buildV3Server(sub: string): McpServer {
   }, guarded((a) => v3ReviewIngestion(sub, a as any)));
 
   server.registerTool("share", {
-    description: "Partage par page : visibilité (private|org|public) OU grant user (read|write). `user` accepte un email (le compte est provisionné + invité au besoin) ou un sub.",
+    description: "Partage par page : visibilité (private|org|public) OU grant user (read|write, ou none pour RÉVOQUER). `user` accepte un email (le compte est provisionné + invité au besoin, sauf en révocation) ou un sub. Renvoie `resolved` (email→sub, pending, provisioned).",
     inputSchema: {
       pageRef: z.string(),
-      to: z.union([z.object({ visibility: z.enum(["private", "org", "public"]) }), z.object({ user: z.string(), mode: z.enum(["read", "write"]) })]),
+      to: z.union([z.object({ visibility: z.enum(["private", "org", "public"]) }), z.object({ user: z.string(), mode: z.enum(["read", "write", "none"]) })]),
     },
     // deno-lint-ignore no-explicit-any
   }, guarded((a) => v3Share(sub, a as any)));

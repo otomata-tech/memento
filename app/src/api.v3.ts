@@ -32,11 +32,14 @@ export interface SearchHit {
 }
 export interface PageSource { id: string; kind: string; title: string; uri: string | null; citation: string | null; locator: string | null }
 export interface PageChild { id: string; title: string; description: string }
+/** Grant individuel sur une page (issue #73). `null` en bloc = pas d'autorité de gestion. */
+export interface PageGrant { userId: string; email: string | null; mode: GrantMode; pending: boolean }
 export interface PageDetail {
   kind: "page"; id: string; base_id: string; parent_id: string | null;
   title: string; description: string; body: string; visibility: Visibility;
   occurred_at: string | null; status: string; created_at: string; updated_at: string;
   children?: PageChild[]; entities?: EntityRef[]; sources?: PageSource[];
+  grants?: PageGrant[] | null; // include:'grants' — null si l'appelant ne peut pas gérer
 }
 export interface EntityMention { page_id: string; span: string | null; confidence: number; title: string }
 export interface EntityDetail {
@@ -55,7 +58,9 @@ export interface Digest {
 }
 // NB : `page.entities` (badges entités) est peuplé côté serveur via include "backlinks"
 // (il n'y a pas de membre "entities" dédié) → ne pas retirer "backlinks" du défaut de getPage.
-export type GetInclude = "children" | "backlinks" | "sources";
+export type GetInclude = "children" | "backlinks" | "sources" | "grants";
+/** Écho de résolution email→sub renvoyé par `share` (grant/révocation). */
+export interface ShareResolved { userId: string; email: string | null; pending: boolean; provisioned: boolean }
 
 // ── Admin org/équipe (verbe unique `admin`, issue #71) ────────────────────────
 export type OrgRole = "admin" | "member";
@@ -123,8 +128,11 @@ export const apiV3 = {
   apply: (ingestionId: string) => post<{ status: string }>("/apply", { ingestionId }),
   review: (ingestionId: string, decision: "reject" | "send_back", reviewNote?: string) =>
     post<{ status: string }>("/review", { ingestionId, decision, reviewNote }),
-  share: (pageRef: string, to: { visibility: Visibility } | { user: string; mode: GrantMode }) =>
-    post<{ ok: true }>("/share", { pageRef, to }),
+  share: (pageRef: string, to: { visibility: Visibility } | { user: string; mode: GrantMode | "none" }) =>
+    post<{ ok: true; resolved?: ShareResolved }>("/share", { pageRef, to }),
+  /** Grants d'une page (« Qui a accès ») — `null` si l'appelant ne peut pas gérer. */
+  pageGrants: (pageRef: string) =>
+    get<PageDetail>("/get", { id: pageRef, kind: "page", include: "grants" }).then((p) => p.grants ?? null),
 
   // ── Admin org/équipe (verbe unique `admin`) ─────────────────────────────────
   admin: {
