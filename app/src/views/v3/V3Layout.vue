@@ -76,8 +76,8 @@ async function signOut() {
   display: flex; align-items: center; gap: 16px; padding: 12px 22px;
   border-bottom: 1px solid var(--color-hair, #e5e2dc); background: var(--color-surface, #fff); z-index: 10;
 }
-.brand { font-family: var(--font-display, serif); font-weight: 700; font-size: 17px; color: var(--color-primary-ink, #1a1a1a); }
-.base-select { padding: 6px 10px; border: 1px solid var(--color-hair, #e5e2dc); background: var(--color-bg, #faf9f7); font: inherit; max-width: 280px; }
+.brand { font-family: var(--font-display, serif); font-weight: 700; font-size: 17px; color: var(--color-primary-ink, #1a1a1a); flex: none; }
+.base-select { padding: 6px 10px; border: 1px solid var(--color-hair, #e5e2dc); background: var(--color-bg, #faf9f7); font: inherit; max-width: 280px; min-width: 0; }
 .nav { display: flex; gap: 4px; margin-left: 8px; }
 .nav a { padding: 6px 12px; color: var(--color-mute, #6b6b6b); text-decoration: none; font-size: 14px; border-radius: 4px; }
 .nav a:hover { background: var(--color-bg, #f3f1ec); }
@@ -91,4 +91,20 @@ async function signOut() {
 /* Vue Pages : app-shell pleine largeur/hauteur, scroll géré en interne (colonnes). */
 .content.flush { max-width: none; margin: 0; padding: 0; overflow: hidden; }
 .empty { color: var(--color-mute, #6b6b6b); padding: 40px 0; text-align: center; }
+
+/* ── Responsive : sous 820px, le header s'empile (marque+base+déco sur une ligne,
+   nav défilable sur la suivante) ; ⌘K masqué (pas de clavier). ── */
+@media (max-width: 820px) {
+  .bar { flex-wrap: wrap; gap: 8px 12px; padding: 10px 14px; }
+  .base-select { flex: 1 1 120px; max-width: none; }
+  .cmdk-hint { display: none; }
+  .nav {
+    order: 5; width: 100%; margin-left: 0; gap: 2px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav a { white-space: nowrap; padding: 6px 10px; }
+  .content:not(.flush) { padding: 16px 14px; max-width: 100%; }
+}
 </style>

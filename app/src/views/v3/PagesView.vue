@@ -53,9 +53,19 @@ const activeId = computed(() => (route.params.id as string | undefined) ?? null)
 // Nombre total de pages accessibles (indépendant de la profondeur chargée) = la mesure
 // de taille qui pilote `auto`.
 const pageCount = computed(() => loadData.value?.counts.pages ?? 0);
+// Sur mobile, les colonnes Miller ne tiennent pas → on force le rail (arbre repliable),
+// et le layout passe en single-pane (arbre XOR lecteur, cf. CSS + bouton retour).
+const isMobile = ref(false);
+if (typeof window !== "undefined") {
+  const mq = window.matchMedia("(max-width: 720px)");
+  isMobile.value = mq.matches;
+  mq.addEventListener("change", (e) => { isMobile.value = e.matches; });
+}
 const effMode = computed<"rail" | "colonnes">(() =>
-  mode.value === "auto" ? (pageCount.value > RAIL_MAX ? "colonnes" : "rail") : mode.value,
+  isMobile.value ? "rail" : mode.value === "auto" ? (pageCount.value > RAIL_MAX ? "colonnes" : "rail") : mode.value,
 );
+// Mobile : revenir du lecteur à l'arbre = désélectionner la page (route /v3).
+function closePage() { router.push("/v3"); }
 const effMeta = computed(
   () => `${mode.value === "auto" ? "Auto" : "Manuel"} · ${effMode.value === "rail" ? "Rail" : "Colonnes"} · ${pageCount.value} p.`,
 );
@@ -202,7 +212,7 @@ const TreeItem = defineComponent({
 </script>
 
 <template>
-  <div class="pages-view">
+  <div class="pages-view" :class="{ 'has-page': !!activeId }">
     <!-- ── Barre de disposition (mode adaptatif + switch manuel) ── -->
     <div class="viewbar">
       <span class="meta mono">{{ effMeta }}</span>
@@ -249,6 +259,9 @@ const TreeItem = defineComponent({
           </div>
         </template>
       </aside>
+
+      <!-- Mobile uniquement : retour du lecteur vers l'arbre (single-pane). -->
+      <button v-if="activeId" type="button" class="mobile-back mono" @click="closePage">← Toutes les pages</button>
 
       <PageReader
         :page="page"
@@ -541,4 +554,34 @@ const TreeItem = defineComponent({
 .muted { color: var(--color-mute, #6b6b6b); }
 .small { font-size: 0.8rem; }
 .error { color: #b3261e; }
+
+/* Bouton retour mobile (single-pane) — masqué sur desktop. */
+.mobile-back {
+  display: none;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: none;
+  border-bottom: 1px solid var(--color-hair, #e5e2dc);
+  background: var(--color-surface, #fff);
+  color: var(--color-primary, #b5532a);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* ══ Responsive (≤720px) : mode rail forcé (cf. isMobile), single-pane ══
+   arbre XOR lecteur ; le bouton retour ramène à l'arbre. */
+@media (max-width: 720px) {
+  .viewbar { flex-wrap: wrap; gap: 6px 10px; padding: 8px 12px; }
+  .seg { margin-left: 0; }
+  .pane-row { flex-direction: column; }
+  .tree-pane { width: 100%; flex: 1 1 auto; border-right: none; }
+  .pages-view.has-page .tree-pane { display: none; }
+  .pages-view:not(.has-page) :deep(.reader-pane) { display: none; }
+  .mobile-back { display: flex; }
+  :deep(.reader-pane) { padding: 1.25rem 1.15rem !important; }
+  :deep(.reader-pane.bordered) { border-left: none; }
+}
 </style>
