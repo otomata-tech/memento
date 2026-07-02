@@ -92,6 +92,22 @@ Deno.test({
     assert(ents.length >= 1, "entité decision créée");
     assert(ents.some((e) => (e.canonical_label as string).includes("pgvector")), "label de la décision");
 
+    // ── régression #109 : create_page SANS description → apply OK (défaut "") ─────
+    // Un `undefined` interpolé dans le template `sql` produisait un fragment VIDE
+    // (`values (…, , …)`) qui cassait l'INSERT. La colonne est NOT NULL default ''.
+    const propND = await v3ProposeChanges(sub, {
+      title: "Sans description",
+      base: baseId,
+      clientKey: "ck-nodesc",
+      changes: [
+        { op: "create_page", payload: { parentId: null, title: "Page sans description", body: "corps" } } as never,
+      ],
+    });
+    const apND = await v3Apply(sub, { ingestionId: propND.ingestionId });
+    assertEquals(apND.status, "APPLIED", "#109: create_page sans description → APPLIED");
+    const [nodesc] = await sql`select description from mem_pages where base_id=${baseId} and title=${"Page sans description"}`;
+    assertEquals(nodesc.description, "", "#109: description absente → défaut ''");
+
     // ── grants (#73) : share → get include grants → révocation → écho + null pour non-gestionnaire ──
     const bob = `${tag}-bob`;
     const shareRes = await v3Share(sub, { pageRef: pageId, to: { user: bob, mode: "read" } });

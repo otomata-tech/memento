@@ -320,10 +320,10 @@ async function applyOp(tx: Tx, sub: string, baseId: string, orgId: string, inges
         select coalesce(max(position),-1)+1 as n from mem_pages where base_id=${baseId} and parent_id is not distinct from ${p.parentId ?? null}::uuid`)).n;
       const id = one<{ id: string }>(await tx.execute(sql`
         insert into mem_pages (base_id, parent_id, title, description, body, depth, position, owner_id, created_by, updated_by)
-        values (${baseId}, ${p.parentId ?? null}::uuid, ${p.title}, ${p.description}, ${p.body ?? ""}, ${parentDepth + 1}, ${pos}, ${sub}, ${sub}, ${sub})
+        values (${baseId}, ${p.parentId ?? null}::uuid, ${p.title}, ${p.description ?? ""}, ${p.body ?? ""}, ${parentDepth + 1}, ${pos}, ${sub}, ${sub}, ${sub})
         returning id`)).id;
       await logRevision(tx, baseId, "page", id, "create_page", "create_page", sub, null, { title: p.title }, ingestionId);
-      return { pageId: id, orgId, text: `${p.title}\n${p.description}\n${p.body ?? ""}` };
+      return { pageId: id, orgId, text: `${p.title}\n${p.description ?? ""}\n${p.body ?? ""}` };
     }
     case "update_page": {
       const p = op.payload;
