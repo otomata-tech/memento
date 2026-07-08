@@ -1,3 +1,13 @@
+---
+title: "Memento — the principles"
+type: explanation
+description: >-
+  Explique pourquoi Memento existe et comment il fonctionne conceptuellement :
+  le bloc typé comme atome adressable, la hiérarchie sections/documents/blocs,
+  le principe « dumb server, smart agent », et la boucle propose-validate qui
+  empêche toute mutation aveugle. À charger quand on veut comprendre le modèle
+  mental avant d'interagir avec les verbes mem_*.
+---
 # Memento — the principles
 
 *Memento mori — note everything.*

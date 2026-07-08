@@ -1,3 +1,14 @@
+---
+title: "Access control"
+type: reference
+description: >-
+  Contrat complet du modèle de contrôle d'accès Memento : tables mem_orgs,
+  mem_memberships, mem_workspaces (visibility org|private|public),
+  mem_workspace_grants ; rôles admin/curator/member ; règles de résolution
+  effectiveRole() et assertWorkspaceAdmin() ; surfaces publiques anonymes et
+  orgs personnelles auto-provisionnées. À charger quand on configure les accès
+  d'une KB, invite un membre externe, partage un workspace, ou débogue un 403.
+---
 # Access control
 
 Who accesses which KB. **Supersedes spec §2.7** (isolation via Logto

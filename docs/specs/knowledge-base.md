@@ -1,3 +1,15 @@
+---
+title: "Memento — founding spec (structured knowledge base, MCP-first)"
+type: reference
+description: >-
+  Spec fondatrice de Memento : modèle de données Drizzle/PostgreSQL complet
+  (MemWorkspace, MemSection, MemDocument, MemBlock, MemLink, MemIngestion…),
+  42 verbes MCP mem_* (workspaces, doctrine, lecture, écriture atomique,
+  restructuration, boucle ingestion propose-validate), invariants garantis en
+  service, et séquence de la boucle d'ingestion pas à pas. À charger quand on
+  implémente ou étend un verb mem_*, debug un comportement inattendu du serveur,
+  ou conçoit une intégration consommatrice du MCP Memento.
+---
 # Memento — founding spec (structured knowledge base, MCP-first)
 
 > **Memento** — *memento mori, note everything.* A **structured, sourced, living

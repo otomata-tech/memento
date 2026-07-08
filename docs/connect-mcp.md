@@ -1,3 +1,14 @@
+---
+title: "Connecting Memento (MCP)"
+type: how-to
+description: >-
+  Procédure pas à pas pour connecter le serveur MCP Memento (mcp.mento.cc/mcp,
+  OAuth 2.1 + DCR, RFC 9728) à claude.ai, Claude Desktop, Claude Code, Mistral
+  Le Chat et ChatGPT. Couvre les prérequis de compte et d'org, le flux OAuth
+  Supabase, et les premiers pas doctrine-first (mem_workspaces → mem_doctrine →
+  drill). À charger quand on veut câbler un nouveau client MCP ou dépanner une
+  connexion (401, outils manquants, boucle OAuth).
+---
 # Connecting Memento (MCP)
 
 Guide to wiring the Memento knowledge base to an MCP client (claude.ai, Claude

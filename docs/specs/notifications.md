@@ -1,3 +1,15 @@
+---
+title: "Memento — notifications & activity feed (RFC)"
+type: reference
+description: >-
+  RFC (draft, non implémenté au 2026-06-18) du substrat de notifications
+  Memento : tables mem_notifications, mem_notification_prefs, mem_watches,
+  taxonomie d'événements (ingestion.pending, comment.added, grant.added…),
+  matrice de routage par canal (in-app / Resend email / Slack app interactive),
+  drain pg_cron + digest, et phasage en 4 lots. À charger quand on implémente
+  les notifications, conçoit le Slack app ou raisonne sur la propagation
+  d'événements dans Memento.
+---
 # Memento — notifications & activity feed (RFC)
 
 Status: **draft RFC, not implemented** (2026-06-18). Prefix `mem_`. Canonical
