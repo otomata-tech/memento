@@ -2,7 +2,7 @@
 /**
  * Memento V3 — fiche Entité (écran 4). Détail d'une entité de 1er ordre (niveau org) :
  * libellé canonique + type, alias, fiche liée (page) et backlinks « Mentionnée dans ».
- * Lit l'id depuis la route (`/v3/entity/:id`) et recharge au changement d'id.
+ * Lit l'id depuis la route (`/entity/:id`) et recharge au changement d'id.
  * États vide / chargement / erreur de 1re classe (issue #59). Code contre le contrat
  * figé `../../api.v3` ; présentation calquée sur PageReader/SearchView (badges entités).
  */
@@ -44,7 +44,7 @@ async function loadEntity(id: string | null) {
 }
 
 function openPage(id: string) {
-  router.push(`/v3/page/${id}`);
+  router.push(`/page/${id}`);
 }
 
 watch(

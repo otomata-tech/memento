@@ -166,7 +166,7 @@ async function changeGrantMode(g: PageGrant, mode: GrantMode) {
 // ── Copier le lien ──────────────────────────────────────────────────────────────
 const pageUrl = computed(() => {
   const { origin } = window.location;
-  return `${origin}/v3/page/${props.pageId}`;
+  return `${origin}/page/${props.pageId}`;
 });
 const copied = ref(false);
 

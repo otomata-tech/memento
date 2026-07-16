@@ -14,10 +14,10 @@ const router = useRouter();
 const route = useRoute();
 // La vue Pages (arbre + colonnes Miller) est un explorateur → pleine largeur/hauteur.
 // Les vues document (Recherche/Org/Connecteur/Inbox) gardent un cadre centré lisible.
-const isPagesView = computed(() => route.path === "/v3" || route.path.startsWith("/v3/page"));
+const isPagesView = computed(() => route.path === "/pages" || route.path.startsWith("/page/"));
 // Route de lecture d'une page/entité — accessible par lien public (sans compte /
 // sans base). Le lecteur doit alors se monter MÊME sans base accessible.
-const isDocRoute = computed(() => route.path.startsWith("/v3/page") || route.path.startsWith("/v3/entity"));
+const isDocRoute = computed(() => route.path.startsWith("/page/") || route.path.startsWith("/entity/"));
 // Chrome cockpit (sélecteur de base, nav, déconnexion) : seulement quand l'appelant
 // a un contexte de base. Un visiteur d'un lien public n'en a pas → vue épurée.
 const cockpit = computed(() => basesLoaded.value && !!currentBase.value);
@@ -31,7 +31,7 @@ onMounted(async () => {
 function onBaseChange(e: Event) {
   setBase((e.target as HTMLSelectElement).value);
   // Revenir à l'arbre de la nouvelle base (les vues détail référencent l'ancienne).
-  if (router.currentRoute.value.path !== "/v3") router.push("/v3");
+  if (router.currentRoute.value.path !== "/pages") router.push("/pages");
 }
 
 async function signOut() {
@@ -51,11 +51,11 @@ async function signOut() {
           <option v-if="basesLoaded && !bases.length" value="">Aucune base accessible</option>
         </select>
         <nav class="nav">
-          <router-link to="/v3" exact-active-class="on">Pages</router-link>
-          <router-link to="/v3/search" active-class="on">Recherche</router-link>
-          <router-link to="/v3/inbox" active-class="on">Boîte de réception</router-link>
-          <router-link to="/v3/org" active-class="on">Organisation</router-link>
-          <router-link to="/v3/connector" active-class="on">Connecteur</router-link>
+          <router-link to="/pages" exact-active-class="on">Pages</router-link>
+          <router-link to="/search" active-class="on">Recherche</router-link>
+          <router-link to="/inbox" active-class="on">Boîte de réception</router-link>
+          <router-link to="/org" active-class="on">Organisation</router-link>
+          <router-link to="/connector" active-class="on">Connecteur</router-link>
         </nav>
         <button
           class="cmdk-hint"

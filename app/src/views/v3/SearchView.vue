@@ -53,7 +53,7 @@ async function runSearch() {
 }
 
 function openPage(id: string) {
-  router.push("/v3/page/" + id);
+  router.push("/page/" + id);
 }
 
 function fmtDate(iso: string): string {
@@ -135,7 +135,7 @@ function fmtDate(iso: string): string {
             <router-link
               class="badge entity"
               :class="e.type"
-              :to="`/v3/entity/${e.id}`"
+              :to="`/entity/${e.id}`"
               :title="ENTITY_LABEL[e.type]"
             >{{ e.label }}</router-link>
           </li>

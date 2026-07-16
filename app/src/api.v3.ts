@@ -1,11 +1,11 @@
 /**
- * Memento V3 — client REST page-centré (miroir des 8 verbes MCP, face REST ADR 0009).
- * CONTRAT FIGÉ : les vues v3 (PagesView/SearchView/InboxView) codent contre CE module,
- * la face REST `supabase/functions/api-v3` l'implémente trait pour trait. Mêmes types
+ * Memento — client REST page-centré (miroir des 8 verbes MCP, face REST ADR 0009).
+ * CONTRAT FIGÉ : les vues (PagesView/SearchView/InboxView) codent contre CE module,
+ * la face REST `supabase/functions/api` l'implémente trait pour trait. Mêmes types
  * que `server/src/mcp-contract.v3.ts` (recopiés ici pour l'indépendance du build front).
  *
- * Auth : Bearer du token Supabase (session). Chemins `/api/v3/*` proxifiés par Caddy
- * vers `functions/v1/api-v3/*` → same-origin, pas de CORS.
+ * Auth : Bearer du token Supabase (session). Chemins `/api/*` proxifiés (CF Pages
+ * Function) vers `functions/v1/api/*` → same-origin, pas de CORS.
  */
 import { supabase } from "./auth";
 
@@ -92,12 +92,12 @@ async function authHeader(): Promise<Record<string, string>> {
 async function get<T>(path: string, params: Record<string, string | number | undefined> = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
-  const res = await fetch(`/api/v3${path}?${qs}`, { headers: await authHeader() });
+  const res = await fetch(`/api${path}?${qs}`, { headers: await authHeader() });
   if (!res.ok) throw new Error(`${path} → ${res.status} ${await res.text().catch(() => "")}`);
   return res.json() as Promise<T>;
 }
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`/api/v3${path}`, {
+  const res = await fetch(`/api${path}`, {
     method: "POST",
     headers: { ...(await authHeader()), "content-type": "application/json" },
     body: JSON.stringify(body),

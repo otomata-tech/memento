@@ -12,7 +12,7 @@
  * Le LECTEUR (PageReader) est partagé par les deux modes. Les colonnes dérivent du chemin
  * de la page active (route-driven) → pas d'état de sélection en double.
  *
- * Sert 2 routes : `/v3` (pas de page → invite) et `/v3/page/:id` (page rendue).
+ * Sert 2 routes : `/pages` (pas de page → invite) et `/page/:id` (page rendue).
  * Code contre le contrat figé `../../api.v3`.
  */
 import { ref, computed, watch, defineComponent, h, type PropType, type Component, type VNode } from "vue";
@@ -64,8 +64,8 @@ if (typeof window !== "undefined") {
 const effMode = computed<"rail" | "colonnes">(() =>
   isMobile.value ? "rail" : mode.value === "auto" ? (pageCount.value > RAIL_MAX ? "colonnes" : "rail") : mode.value,
 );
-// Mobile : revenir du lecteur à l'arbre = désélectionner la page (route /v3).
-function closePage() { router.push("/v3"); }
+// Mobile : revenir du lecteur à l'arbre = désélectionner la page (route /pages).
+function closePage() { router.push("/pages"); }
 const effMeta = computed(
   () => `${mode.value === "auto" ? "Auto" : "Manuel"} · ${effMode.value === "rail" ? "Rail" : "Colonnes"} · ${pageCount.value} p.`,
 );
@@ -113,7 +113,7 @@ watch(currentBase, () => loadTree(), { immediate: true });
 watch(activeId, (id) => loadPage(id), { immediate: true });
 
 function openPage(id: string) {
-  router.push(`/v3/page/${id}`);
+  router.push(`/page/${id}`);
 }
 
 // ── Navigation Miller (colonnes) ──────────────────────────────────────────────

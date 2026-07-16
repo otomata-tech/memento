@@ -185,7 +185,7 @@ function relativeDate(iso: string): string {
 }
 
 function openPage(id: string) {
-  router.push(`/v3/page/${id}`);
+  router.push(`/page/${id}`);
 }
 
 watch(currentBase, () => {
@@ -298,7 +298,7 @@ onMounted(() => {
       </button>
       <ul v-if="digestOpen" class="digest-list">
         <li v-for="p in digest.recentPages" :key="p.id">
-          <a class="digest-link" @click.prevent="openPage(p.id)" :href="`/v3/page/${p.id}`">{{ p.title }}</a>
+          <a class="digest-link" @click.prevent="openPage(p.id)" :href="`/page/${p.id}`">{{ p.title }}</a>
           <span v-if="p.description" class="digest-desc">— {{ p.description }}</span>
         </li>
       </ul>

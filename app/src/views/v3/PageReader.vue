@@ -150,7 +150,7 @@ function entityClass(type: EntityType): string {
         <h2 class="section-title">Entités</h2>
         <ul class="entity-list inline">
           <li v-for="ent in page.entities" :key="ent.id">
-            <router-link :to="`/v3/entity/${ent.id}`" class="entity-link">
+            <router-link :to="`/entity/${ent.id}`" class="entity-link">
               <span :class="entityClass(ent.type)">{{ ENTITY_LABELS[ent.type] }}</span>
               <span class="entity-label">{{ ent.label }}</span>
             </router-link>

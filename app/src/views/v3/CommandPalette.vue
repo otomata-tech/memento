@@ -26,11 +26,11 @@ let searchSeq = 0;
 type Item = { kind: "nav" | "page"; label: string; sublabel?: string; run: () => void };
 
 const NAV: { label: string; to: string }[] = [
-  { label: "Pages", to: "/v3" },
-  { label: "Recherche", to: "/v3/search" },
-  { label: "Boîte de réception", to: "/v3/inbox" },
-  { label: "Organisation", to: "/v3/org" },
-  { label: "Connecteur", to: "/v3/connector" },
+  { label: "Pages", to: "/pages" },
+  { label: "Recherche", to: "/search" },
+  { label: "Boîte de réception", to: "/inbox" },
+  { label: "Organisation", to: "/org" },
+  { label: "Connecteur", to: "/connector" },
 ];
 
 function go(to: string) {
@@ -55,7 +55,7 @@ const pageItems = computed<Item[]>(() =>
     kind: "page",
     label: h.title || "Sans titre",
     sublabel: h.description || undefined,
-    run: () => go(`/v3/page/${h.pageId}`),
+    run: () => go(`/page/${h.pageId}`),
   })),
 );
 
