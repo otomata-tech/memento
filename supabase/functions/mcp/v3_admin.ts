@@ -4,7 +4,7 @@
  * noyau (v3.ts) reste à 8 verbes, l'admin est « hors noyau », chargé à la demande.
  *
  * Pur aiguillage action → `_shared/admin.v3.ts` (où vivent l'autz et la logique).
- * Partagé par les deux faces : surface MCP (v3_server.ts) et REST (api-v3).
+ * Partagé par les deux faces : surface MCP (v3_server.ts) et REST (api/index.ts).
  */
 import * as admin from "../_shared/admin.v3.ts";
 

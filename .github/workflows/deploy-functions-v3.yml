@@ -34,10 +34,10 @@ jobs:
       - uses: supabase/setup-cli@v2
         with:
           version: latest
-      - name: Deploy functions v3 (api-v3 + mcp-v3)
+      - name: Deploy functions (api + mcp)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           rm -f supabase/functions/deno.lock
-          supabase functions deploy api-v3 --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
-          supabase functions deploy mcp-v3 --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy mcp --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
