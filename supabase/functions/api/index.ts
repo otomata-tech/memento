@@ -1,325 +1,159 @@
 /**
- * Memento REST — Supabase Edge Function (Deno). Mirror of the `mem_*` verbs on top
- * of the shared services layer (`../_shared/`), for server-to-server and the
- * viewer. Same query params as the MCP surface (id | path, workspace, q...).
+ * Memento V3 — FACE REST (ADR 0009 « deux faces ») des verbes v3.
  *
- * Once deployed, the "api" function answers on /api/*. Locally: deno run -A .../api/index.ts
+ * Expose en JSON HTTP les MÊMES handlers `v3*` que la surface MCP (`mcp/v3.ts`),
+ * sans dupliquer la moindre logique métier ni la moindre garde d'accès : ce module
+ * n'est qu'un adaptateur de transport (parse requête → handler → JSON).
+ *
+ * Consommée par le client front figé `app/src/api.v3.ts` (mêmes chemins, mêmes
+ * formes de retour). La CF Pages Function proxifie `/api/*` → `functions/v1/api/*`
+ * (same-origin) ; le verbe = DERNIER segment du pathname, robuste au préfixe.
+ *
+ * Auth : `authenticate(req)` (Bearer du token Supabase, resource-server RFC 9728),
+ * réutilisé tel quel depuis `_shared/auth.ts`.
  */
-import { listWorkspaces, listPublicWorkspaces, getDoctrine } from "../_shared/workspaces.ts";
-import { getSection } from "../_shared/sections.ts";
-import { getDocument, getBlock } from "../_shared/documents.ts";
-import { searchBlocks, searchPublic } from "../_shared/search.ts";
-import { listRevisions } from "../_shared/revisions.ts";
-import { verifyBlock, attachSource, addComment, resolveComment, addDocument, deprecateDocument, restoreDocument, updateDocument, deleteDocument, updateBlock } from "../_shared/write.ts";
-import { createSection, renameSection, reorder, moveDocuments, deleteSectionCascade, moveDocumentsCrossWorkspace, moveSectionCrossWorkspace } from "../_shared/restructure.ts";
-import { getIngestion, listIngestions, listInbox, applyIngestion, rejectIngestion, requestChanges } from "../_shared/ingestion.ts";
-import {
-  listMyOrgs, removeMember, inviteMember, createWorkspace, createOrg, updateOrg, deleteOrg, deleteWorkspace,
-  resendInvite, inviteLinkFor, transferWorkspace, ensureDefaultWorkspace, ensureAccount,
-} from "../_shared/admin.ts";
-import { getDefaultWorkspace, setDefaultWorkspace, listPins, pinWorkspace, unpinWorkspace } from "../_shared/prefs.ts";
-import { listAccounts } from "../_shared/platform.ts";
-import { listGrants, grantAccess, revokeGrant, setVisibility } from "../_shared/grants.ts";
-import { logUsage, listUsageLogs } from "../_shared/usage_log.ts";
-import { listAgentChatLogs } from "../_shared/agent_log.ts";
-import { setDoctrine, updateWorkspace, archiveWorkspace } from "../_shared/workspace_mgmt.ts";
 import { authenticate } from "../_shared/auth.ts";
-import { assertAccess, assertWorkspaceAdmin, accessibleWorkspaceIds, AccessError, safeErrorMessage } from "../_shared/access.ts";
-import { assertWithinLimit, RateLimitError } from "../_shared/ratelimit.ts";
+import { AccessError, safeErrorMessage } from "../_shared/access.v3.ts";
+import {
+  v3Apply, v3Bases, v3Count, v3Digest, v3Get, v3List, v3Load,
+  v3ProposeChanges, v3ReviewIngestion, v3Search, v3Share,
+} from "../mcp/v3.ts";
+import { v3Admin } from "../mcp/v3_admin.ts";
 
-/** Origins allowed to call the API cross-origin (the viewer goes through a
- *  same-origin proxy and doesn't need it). No `*`: we only reflect a known
- *  origin. */
-const ALLOWED_ORIGINS = new Set(
-  [
-    Deno.env.get("MEMENTO_APP_URL"),
-    Deno.env.get("MEMENTO_PUBLIC_URL"),
-    "https://mento.cc",
-    "https://me.mento.cc",
-    "http://localhost:5188",
-    "http://localhost:5173",
-  ]
-    .filter((u): u is string => !!u)
-    .map((u) => {
-      try { return new URL(u).origin; } catch { return u; }
-    }),
-);
+const CORS = { "access-control-allow-origin": "*" } as const;
 
-function corsHeaders(origin: string | null): Record<string, string> {
-  const h: Record<string, string> = {
-    "access-control-allow-headers": "content-type, authorization",
-    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-    "vary": "Origin",
-  };
-  if (origin && ALLOWED_ORIGINS.has(origin)) h["access-control-allow-origin"] = origin;
-  return h;
-}
-
-function jsonRes(data: unknown, status = 200, cors: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(data), {
+const jsonResponse = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
     status,
-    headers: { "content-type": "application/json; charset=utf-8", ...cors },
+    headers: { "content-type": "application/json", ...CORS },
   });
-}
 
-/** Routes reserved for logged-in accounts even on a public KB: the
- *  editorial/audit layer (revision log, ingestion queue) carries the identity of
- *  contributors — not public data. Reading content, on the other hand, is open. */
-function requireAuthenticated(sub: string): void {
-  if (!sub) throw new AccessError("resource not found or access denied");
-}
-
-async function route(path: string, q: URLSearchParams, sub: string): Promise<unknown> {
-  const id = q.get("id") ?? undefined;
-  const p = q.get("path") ?? undefined;
-  switch (path) {
-    // ── PUBLIC surface (no auth): gallery + search of public KBs ──
-    case "/public/workspaces":
-      return listPublicWorkspaces();
-    case "/public/search":
-      await assertWithinLimit(sub, "search_public"); // anonymous (sub="") = no-op, bounded by WAF
-      return searchPublic({
-        q: q.get("q") ?? "",
-        blockType: q.get("blockType") ?? undefined,
-        docKind: q.get("docKind") ?? undefined,
-        maxHits: q.get("maxHits") ? Number(q.get("maxHits")) : undefined,
-      });
-    case "/workspaces":
-      // Onboarding: a logged-in account with no KB gets one created (personal org, private).
-      await ensureDefaultWorkspace(sub); // anonymous (sub="") = no-op
-      return listWorkspaces({ ids: await accessibleWorkspaceIds(sub) });
-    case "/prefs":
-      return { defaultWorkspace: (await getDefaultWorkspace(sub))?.slug ?? null };
-    case "/prefs/pins":
-      requireAuthenticated(sub);
-      return listPins(sub);
-    case "/admin/orgs":
-      return listMyOrgs(sub);
-    case "/admin/accounts":
-      // Gating in listAccounts: platform operators (MEMENTO_PLATFORM_ADMINS).
-      return listAccounts(sub);
-    case "/workspace/grants":
-      // Gating in listGrants: effective admin of the base.
-      return listGrants(sub, { workspace: q.get("workspace")! });
-    case "/doctrine":
-      await assertAccess(sub, { workspace: q.get("workspace")! });
-      return getDoctrine(q.get("workspace")!);
-    case "/section":
-      await assertAccess(sub, p ? { path: p } : { id, kind: "section" });
-      return getSection({ id, path: p });
-    case "/document":
-      await assertAccess(sub, p ? { path: p } : { id, kind: "document" });
-      return getDocument({ id, path: p });
-    case "/block":
-      await assertAccess(sub, { id: q.get("id")!, kind: "block" });
-      return getBlock(q.get("id")!);
-    case "/search":
-      await assertAccess(sub, { workspace: q.get("workspace")! });
-      return searchBlocks({
-        workspace: q.get("workspace")!,
-        q: q.get("q") ?? "",
-        blockType: q.get("blockType") ?? undefined,
-        sectionPath: q.get("sectionPath") ?? undefined,
-        docKind: q.get("docKind") ?? undefined,
-        maxHits: q.get("maxHits") ? Number(q.get("maxHits")) : undefined,
-      });
-    case "/revisions":
-      requireAuthenticated(sub);
-      await assertAccess(sub, { workspace: q.get("workspace")! });
-      return listRevisions({
-        workspace: q.get("workspace")!,
-        targetType: q.get("targetType") ?? undefined,
-        targetId: q.get("targetId") ?? undefined,
-        since: q.get("since") ?? undefined,
-        limit: q.get("limit") ? Number(q.get("limit")) : undefined,
-      });
-    case "/ingestions":
-      requireAuthenticated(sub);
-      await assertAccess(sub, { workspace: q.get("workspace")! });
-      return listIngestions({ workspace: q.get("workspace")!, status: q.get("status") ?? undefined });
-    case "/ingestion":
-      requireAuthenticated(sub);
-      await assertAccess(sub, { id: q.get("id")!, kind: "ingestion" });
-      return getIngestion(q.get("id")!);
-    case "/inbox":
-      // Cross-org/cross-KB: pending ingestions across every workspace the user can access.
-      requireAuthenticated(sub);
-      return listInbox(await accessibleWorkspaceIds(sub));
-    case "/usage-logs":
-      // Scoping in listUsageLogs: my logs, or a KB's logs if admin/curator.
-      return listUsageLogs({
-        workspace: q.get("workspace") ?? undefined,
-        verb: q.get("verb") ?? undefined,
-        kind: q.get("kind") ?? undefined,
-        limit: q.get("limit") ? Number(q.get("limit")) : undefined,
-      }, sub);
-    case "/agent-logs":
-      // Transcript of the public agent for a KB — curator/admin only (gated in the service).
-      requireAuthenticated(sub);
-      return listAgentChatLogs({
-        workspace: q.get("workspace")!,
-        noHits: q.get("noHits") === "1" || q.get("noHits") === "true",
-        limit: q.get("limit") ? Number(q.get("limit")) : undefined,
-      }, sub);
-    default: return null;
-  }
-}
-
-/** Mutating routes (admin + preferences) — POST/DELETE with JSON body. */
-async function mutationRoute(method: string, path: string, body: any, sub: string): Promise<unknown> {
-  switch (`${method} ${path}`) {
-    case "POST /admin/invite": return inviteMember(sub, body);
-    case "POST /admin/invite/resend": return resendInvite(sub, body);
-    case "POST /admin/invite/link": return inviteLinkFor(sub, body);
-    case "POST /admin/orgs": return createOrg(sub, body);
-    case "POST /admin/orgs/update": return updateOrg(sub, body);
-    case "DELETE /admin/orgs": return deleteOrg(sub, body);
-    case "POST /admin/workspaces": return createWorkspace(sub, body);
-    case "POST /admin/workspaces/transfer": return transferWorkspace(sub, body);
-    case "DELETE /admin/members": return removeMember(sub, body);
-    case "POST /prefs/default-workspace": {
-      const w = await setDefaultWorkspace(sub, body.workspace);
-      return { defaultWorkspace: w.slug, name: w.name };
-    }
-    case "POST /prefs/pin":
-      requireAuthenticated(sub);
-      return pinWorkspace(sub, body.workspace); // assertAccess (read) inside the fn
-    case "DELETE /prefs/pin":
-      requireAuthenticated(sub);
-      return unpinWorkspace(sub, body.workspace);
-    case "POST /workspace/doctrine":
-      await assertAccess(sub, { workspace: body.workspace }, { write: true });
-      return setDoctrine(body, sub);
-    case "POST /workspace/update":
-      await assertAccess(sub, { workspace: body.workspace }, { write: true });
-      return updateWorkspace(body, sub);
-    case "DELETE /workspace":
-      // Hard-delete a whole KB — org-admin + archived-first checks live inside deleteWorkspace.
-      return deleteWorkspace(sub, body);
-    case "POST /workspace/archive":
-      await assertWorkspaceAdmin(sub, body.workspace);
-      return archiveWorkspace(body, sub);
-    // ── Per-KB scope (effective admin gating in the services, issue #60) ──
-    case "POST /workspace/grants": return grantAccess(sub, body);
-    case "DELETE /workspace/grants": return revokeGrant(sub, body);
-    case "POST /workspace/visibility": return setVisibility(sub, body);
-    // ── Curated writes (admin/curator only, gated by assertAccess write) ──
-    case "POST /block/verify":
-      await assertAccess(sub, { id: body.id, kind: "block" }, { write: true });
-      return verifyBlock(body, sub);
-    case "POST /block/update":
-      await assertAccess(sub, { id: body.id, kind: "block" }, { write: true });
-      return updateBlock(body, sub);
-    case "POST /block/source":
-      await assertAccess(sub, { id: body.blockId, kind: "block" }, { write: true });
-      return attachSource(body, sub);
-    case "POST /block/comment":
-      await assertAccess(sub, { id: body.targetId, kind: body.targetType.toLowerCase() }, { write: true });
-      return addComment(body, sub);
-    case "POST /comment/resolve":
-      await assertAccess(sub, { id: body.id, kind: "comment" }, { write: true });
-      return resolveComment({ id: body.id });
-    // ── Structure (curator/admin only, gated by assertAccess write) — REST mirror of restructure verbs ──
-    case "POST /section/create":
-      await assertAccess(sub, { workspace: body.workspace }, { write: true });
-      return createSection(body, sub);
-    case "POST /section/rename":
-      await assertAccess(sub, { id: body.id, kind: "section" }, { write: true });
-      return renameSection(body, sub);
-    case "POST /section/reorder":
-      // reorder asserts write access on the real (anchored) entity itself.
-      return reorder(body, sub);
-    case "POST /document/create":
-      await assertAccess(sub, { id: body.sectionId, kind: "section" }, { write: true });
-      return addDocument(body, sub);
-    case "POST /document/deprecate":
-      await assertAccess(sub, { id: body.id, kind: "document" }, { write: true });
-      return deprecateDocument(body, sub);
-    case "POST /document/restore":
-      await assertAccess(sub, { id: body.id, kind: "document" }, { write: true });
-      return restoreDocument(body, sub);
-    case "POST /document/update":
-      await assertAccess(sub, { id: body.id, kind: "document" }, { write: true });
-      return updateDocument(body, sub);
-    case "POST /documents/move":
-      // Same-workspace move: write on the target section ⇒ same KB ⇒ covers source.
-      await assertAccess(sub, { id: body.targetSectionId, kind: "section" }, { write: true });
-      return moveDocuments(body, sub);
-    // ── Cross-workspace / cross-org moves (write on BOTH sides) ──
-    case "POST /documents/move-cross": {
-      await assertAccess(sub, { id: body.targetSectionId, kind: "section" }, { write: true });
-      for (const id of (body.documentIds ?? [])) await assertAccess(sub, { id, kind: "document" }, { write: true });
-      return moveDocumentsCrossWorkspace(body, sub);
-    }
-    case "POST /section/move-cross":
-      await assertAccess(sub, { id: body.sectionId, kind: "section" }, { write: true });
-      await assertAccess(sub, { workspace: body.targetWorkspace }, { write: true });
-      return moveSectionCrossWorkspace(body, sub);
-    // ── Hard delete (irreversible) — curator/admin, like the other structural verbs ──
-    case "DELETE /document":
-      await assertAccess(sub, { id: body.id, kind: "document" }, { write: true });
-      return deleteDocument({ id: body.id, reason: body.reason }, sub);
-    case "DELETE /section":
-      await assertAccess(sub, { id: body.id, kind: "section" }, { write: true });
-      return deleteSectionCascade({ id: body.id, reason: body.reason }, sub);
-    case "POST /ingestion/apply":
-      await assertAccess(sub, { id: body.id, kind: "ingestion" }, { write: true });
-      return applyIngestion(body, sub);
-    case "POST /ingestion/reject":
-      await assertAccess(sub, { id: body.id, kind: "ingestion" }, { write: true });
-      return rejectIngestion(body, sub);
-    case "POST /ingestion/request-changes":
-      await assertAccess(sub, { id: body.id, kind: "ingestion" }, { write: true });
-      return requestChanges(body, sub);
-    case "POST /usage-log":
-      // Product feedback: open to any authenticated user, no role required.
-      return logUsage(body, sub);
-    default: return null;
-  }
-}
-
-Deno.serve({ port: Number(Deno.env.get("PORT") ?? 8000) }, async (req) => {
-  const cors = corsHeaders(req.headers.get("origin"));
-  if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+Deno.serve(async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
-  // Strip the function's routing prefix (/api) if present.
-  const path = url.pathname.replace(/^\/api/, "") || "/";
-  if (path === "/health") return new Response("ok", { headers: cors });
-  // oto→memento federation (otomata#16): an account created on oto requests the creation
-  // of the matching memento account (joined by email). Authenticated by the shared
-  // SERVICE SECRET (MEMENTO_PROVISION_BEARER), NOT by the user's OAuth — before
-  // authenticate(). memento stays the owner of the creation (ensureAccount).
-  if (path === "/federation/provision" && req.method === "POST") {
-    const secret = Deno.env.get("MEMENTO_PROVISION_BEARER");
-    const got = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-    if (!secret || got !== secret) return jsonRes({ error: "forbidden" }, 403, cors);
-    const body = await req.json().catch(() => ({})) as { email?: string };
-    const email = (body.email ?? "").trim();
-    if (!email) return jsonRes({ error: "email required" }, 400, cors);
-    try {
-      const r = await ensureAccount(email);
-      return jsonRes({ ok: true, provisioned: r.provisioned, sub: r.sub }, 200, cors);
-    } catch (e) {
-      console.error("[api] federation/provision:", e);
-      return jsonRes({ error: safeErrorMessage(e) }, 500, cors);
-    }
+
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        ...CORS,
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-headers": "authorization, content-type",
+      },
+    });
   }
-  // Anonymous read allowed (GET): without a token, we continue with sub="" and each
-  // route stays guarded by assertAccess → only the `public` scope passes (response
-  // indistinguishable from a denial otherwise). Mutations always require a valid token.
+
+  if (url.pathname.endsWith("/health")) return new Response("ok", { headers: CORS });
+
+  // Lecture anonyme tolérée : un GET SANS Bearer passe en `sub=""` — le scope
+  // public seul est servi (borné par `assertAccess`/`is_page_accessible`, qui
+  // inclut le public-par-lien). Un Bearer présent mais invalide, ou toute écriture
+  // (POST), reste rejeté (401/403). Symétrie avec la face `/w/` du viewer.
+  const hasBearer = /^Bearer\s+/i.test(req.headers.get("authorization") ?? "");
   const auth = await authenticate(req);
-  if (!auth.ok && req.method !== "GET") return jsonRes({ error: auth.message }, auth.status, cors);
+  if (!auth.ok && (hasBearer || req.method !== "GET")) {
+    return jsonResponse({ error: auth.message }, auth.status);
+  }
   const sub = auth.ok ? (auth.claims.sub ?? "") : "";
+
+  // Verbe = dernier segment, robuste au préfixe (/functions/v1/api/<verbe>).
+  const verb = url.pathname.split("/").filter(Boolean).pop() ?? "";
+  const q = url.searchParams;
+
   try {
-    const data = req.method === "GET"
-      ? await route(path, url.searchParams, sub)
-      : await mutationRoute(req.method, path, await req.json().catch(() => ({})), sub);
-    if (data === null) return jsonRes({ error: `unknown route: ${path}` }, 404, cors);
-    return jsonRes(data, 200, cors);
+    let result: unknown;
+    if (req.method === "GET") {
+      switch (verb) {
+        case "bases":
+          result = await v3Bases(sub);
+          break;
+        case "load":
+          result = await v3Load(sub, {
+            base: q.get("base") ?? undefined,
+            depth: q.get("depth") ? Number(q.get("depth")) : undefined,
+          });
+          break;
+        case "search": {
+          const base = q.get("base") ?? undefined;
+          const limit = q.get("limit");
+          result = await v3Search(sub, {
+            q: q.get("q") ?? "",
+            scope: (q.get("scope") as "savoir" | "sources" | "both" | null) ?? undefined,
+            limit: limit ? Number(limit) : undefined,
+            filters: base ? { base } : undefined,
+          });
+          break;
+        }
+        case "get": {
+          const include = q.get("include");
+          result = await v3Get(sub, {
+            id: q.get("id") ?? "",
+            kind: (q.get("kind") as "page" | "entity") ?? "page",
+            include: include ? String(include).split(",") : undefined,
+          });
+          break;
+        }
+        case "list": {
+          const filters = q.get("filters");
+          const limit = q.get("limit");
+          result = await v3List(sub, {
+            // deno-lint-ignore no-explicit-any
+            kind: (q.get("kind") ?? "pages") as any,
+            base: q.get("base") ?? undefined,
+            filters: filters ? JSON.parse(filters) : undefined,
+            cursor: q.get("cursor") ?? undefined,
+            limit: limit ? Number(limit) : undefined,
+          });
+          break;
+        }
+        case "count": {
+          const filters = q.get("filters");
+          result = await v3Count(sub, {
+            // deno-lint-ignore no-explicit-any
+            kind: (q.get("kind") ?? "pages") as any,
+            base: q.get("base") ?? undefined,
+            filters: filters ? JSON.parse(filters) : undefined,
+          });
+          break;
+        }
+        case "digest": {
+          const sinceDays = q.get("sinceDays");
+          result = await v3Digest(sub, {
+            base: q.get("base") ?? undefined,
+            sinceDays: sinceDays ? Number(sinceDays) : undefined,
+          });
+          break;
+        }
+        default:
+          return jsonResponse({ error: `unknown verb: ${verb}` }, 404);
+      }
+    } else if (req.method === "POST") {
+      const body = await req.json();
+      switch (verb) {
+        case "propose":
+          result = await v3ProposeChanges(sub, body);
+          break;
+        case "apply":
+          result = await v3Apply(sub, body);
+          break;
+        case "review":
+          result = await v3ReviewIngestion(sub, body);
+          break;
+        case "share":
+          result = await v3Share(sub, body);
+          break;
+        case "admin":
+          result = await v3Admin(sub, body);
+          break;
+        default:
+          return jsonResponse({ error: `unknown verb: ${verb}` }, 404);
+      }
+    } else {
+      return jsonResponse({ error: "method not allowed" }, 405);
+    }
+    return jsonResponse(result);
   } catch (e) {
-    if (e instanceof AccessError) return jsonRes({ error: e.message }, 403, cors);
-    if (e instanceof RateLimitError) return jsonRes({ error: e.message }, 429, cors);
-    console.error(`[api] ${req.method} ${path}:`, e);
-    return jsonRes({ error: safeErrorMessage(e) }, 400, cors);
+    if (e instanceof AccessError) return jsonResponse({ error: e.message }, 403);
+    console.error("[api] verb failed:", verb, e);
+    return jsonResponse({ error: safeErrorMessage(e) }, 500);
   }
 });

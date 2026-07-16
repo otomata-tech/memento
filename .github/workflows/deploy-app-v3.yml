@@ -1,0 +1,50 @@
+name: Deploy app (v3)
+
+# Déploie l'app v3 (SPA page-centrée + Pages Functions proxy /mcp, /api, /.well-known)
+# sur Cloudflare Pages `memento-viewer` = la PROD me.mento.cc / mcp.mento.cc.
+# ⚠️ Cutover 2026-06-28 (issue #58) : v3 est LIVE — ce workflow remplace l'ancien
+# build-serveur vers otomata-0 (memento-v3.oto.zone, staging ABANDONNÉ).
+# VITE_MEMENTO_V3=true est OBLIGATOIRE : sans lui, /home sert le viewer v2 (qui
+# appelle les endpoints v2 → 404 depuis que /api est routé vers api-v3).
+# Gated par repository_owner (un fork ne déploie pas notre prod).
+
+on:
+  push:
+    branches: [memento-v3]
+    paths:
+      - "app/**"
+      - ".github/workflows/deploy-app-v3.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-app-v3
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository_owner == 'otomata-tech'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - name: Build
+        working-directory: app
+        env:
+          VITE_MEMENTO_V3: "true"
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          # PostHog Project API Key (phc_) is publishable (write-only ingestion) → safe inline.
+          VITE_POSTHOG_KEY: phc_wYEankhdv3AnCE7JEMeiiidt6yssKXRnkAn36TpFdesC
+          VITE_POSTHOG_HOST: https://eu.i.posthog.com
+        run: |
+          npm ci
+          npm run build
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: app
+          command: pages deploy dist --project-name=memento-viewer --branch=main
