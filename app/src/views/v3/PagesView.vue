@@ -231,10 +231,12 @@ const TreeItem = defineComponent({
       </div>
     </div>
 
-    <!-- États globaux -->
-    <div v-if="loadingTree" class="pane-state muted small">Chargement…</div>
-    <div v-else-if="loadError" class="pane-state error small">{{ loadError }}</div>
-    <div v-else-if="!currentBase" class="pane-state muted small">Aucune base sélectionnée.</div>
+    <!-- États globaux — n'écrasent PAS le lecteur quand une page est active
+         (un visiteur anonyme d'un lien public n'a ni session ni base : l'arbre
+         échoue/est vide, mais la page publique se charge et doit s'afficher). -->
+    <div v-if="loadingTree && !activeId" class="pane-state muted small">Chargement…</div>
+    <div v-else-if="loadError && !activeId" class="pane-state error small">{{ loadError }}</div>
+    <div v-else-if="!currentBase && !activeId" class="pane-state muted small">Aucune base sélectionnée.</div>
 
     <!-- ════════ MODE RAIL ════════ -->
     <div v-else-if="effMode === 'rail'" class="pane-row">

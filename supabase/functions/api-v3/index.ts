@@ -44,9 +44,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (url.pathname.endsWith("/health")) return new Response("ok", { headers: CORS });
 
+  // Lecture anonyme tolérée : un GET SANS Bearer passe en `sub=""` — le scope
+  // public seul est servi (borné par `assertAccess`/`is_page_accessible`, qui
+  // inclut le public-par-lien). Un Bearer présent mais invalide, ou toute écriture
+  // (POST), reste rejeté (401/403). Symétrie avec la face `/w/` du viewer.
+  const hasBearer = /^Bearer\s+/i.test(req.headers.get("authorization") ?? "");
   const auth = await authenticate(req);
-  if (!auth.ok) return jsonResponse({ error: auth.message }, auth.status);
-  const sub = auth.claims.sub ?? "";
+  if (!auth.ok && (hasBearer || req.method !== "GET")) {
+    return jsonResponse({ error: auth.message }, auth.status);
+  }
+  const sub = auth.ok ? (auth.claims.sub ?? "") : "";
 
   // Verbe = dernier segment, robuste au préfixe Caddy (/functions/v1/api-v3/v3/<verbe>).
   const verb = url.pathname.split("/").filter(Boolean).pop() ?? "";

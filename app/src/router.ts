@@ -94,6 +94,9 @@ router.beforeEach(async (to) => {
   // Reading a KB: tolerated without a session (the viewer/API handle access — only
   // the public part passes anonymously). The other routes (org, accounts…) require a login.
   if (to.path.startsWith("/w/")) return true;
+  // Reading a v3 page/entity: same anonymous tolerance — a `public` page is shareable
+  // by link (the API serves only the public scope for sub=""). Editing stays gated.
+  if (/^\/v3\/(page|entity)\//.test(to.path)) return true;
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return { path: "/login", query: { redirect: to.fullPath } };
   return true;
