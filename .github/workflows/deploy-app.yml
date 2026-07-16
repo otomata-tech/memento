@@ -1,19 +1,15 @@
-name: Deploy app (v3)
+name: Deploy app
 
-# Déploie l'app v3 (SPA page-centrée + Pages Functions proxy /mcp, /api, /.well-known)
+# Déploie l'app (SPA page-centrée + Pages Functions proxy /mcp, /api, /.well-known)
 # sur Cloudflare Pages `memento-viewer` = la PROD me.mento.cc / mcp.mento.cc.
-# ⚠️ Cutover 2026-06-28 (issue #58) : v3 est LIVE — ce workflow remplace l'ancien
-# build-serveur vers otomata-0 (memento-v3.oto.zone, staging ABANDONNÉ).
-# VITE_MEMENTO_V3=true est OBLIGATOIRE : sans lui, /home sert le viewer v2 (qui
-# appelle les endpoints v2 → 404 depuis que /api est routé vers api-v3).
 # Gated par repository_owner (un fork ne déploie pas notre prod).
 
 on:
   push:
-    branches: [memento-v3]
+    branches: [main]
     paths:
       - "app/**"
-      - ".github/workflows/deploy-app-v3.yml"
+      - ".github/workflows/deploy-app.yml"
   workflow_dispatch:
 
 concurrency:
@@ -32,7 +28,6 @@ jobs:
       - name: Build
         working-directory: app
         env:
-          VITE_MEMENTO_V3: "true"
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           # PostHog Project API Key (phc_) is publishable (write-only ingestion) → safe inline.

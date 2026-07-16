@@ -1,26 +1,23 @@
 name: Deploy edge functions
 
-# Deploys the Supabase Edge Functions (mcp + api) on push to main.
-# We migrate the DB BEFORE deploying (otherwise a function reading a not-yet-migrated
-# column breaks). Sequential fail-fast steps.
-# Deploys Otomata's hosted instance; gated by repository_owner (a fork does not deploy
-# our prod — configure your own secrets/variable and Supabase project for yours).
+# Déploie les Edge Functions (api + mcp) sur le projet Supabase de PROD mento.cc
+# (ref doebdriroupduqpggcsj) à chaque push sur main.
+# Les tables vivent dans le schéma `memento_v3` de ce projet (db.v3.ts pose le
+# search_path). PAS de migration DB ici (migrations sensibles → appliquées à la main).
+# Gated par repository_owner (un fork ne déploie pas notre prod).
 #
-# Required secrets: SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL (session pooler, IPv4).
-# Required variable: SUPABASE_PROJECT_REF.
+# Secret requis : SUPABASE_ACCESS_TOKEN (account-level).
 
 on:
   push:
     branches: [main]
     paths:
       - "supabase/functions/**"
-      - "server/src/schema.ts"
-      - "server/drizzle/**"
       - ".github/workflows/deploy-functions.yml"
   workflow_dispatch:
 
 concurrency:
-  group: deploy-functions
+  group: deploy-functions-v3
   cancel-in-progress: false
 
 jobs:
@@ -28,30 +25,16 @@ jobs:
     if: github.repository_owner == 'otomata-tech'
     runs-on: ubuntu-latest
     env:
-      SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+      SUPABASE_PROJECT_REF: doebdriroupduqpggcsj # projet PROD mento.cc (cutover #58) — ref publique
     steps:
       - uses: actions/checkout@v6
-
-      # 1. DB migrations (prod) — BEFORE the deploy.
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-      - name: Migrate prod DB
-        working-directory: server
-        env:
-          DATABASE_URL: ${{ secrets.SUPABASE_DB_URL }}
-        run: |
-          npm ci
-          npm run db:migrate
-
-      # 2. Deploy functions (migration failure ⇒ we never reach here).
       - uses: supabase/setup-cli@v2
         with:
           version: latest
-      - name: Deploy functions (mcp + api)
+      - name: Deploy functions (api + mcp)
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           rm -f supabase/functions/deno.lock
-          supabase functions deploy mcp --project-ref "$SUPABASE_PROJECT_REF"
-          supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF"
+          supabase functions deploy api --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt
+          supabase functions deploy mcp --project-ref "$SUPABASE_PROJECT_REF" --no-verify-jwt

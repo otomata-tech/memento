@@ -1,7 +1,7 @@
-name: Deploy NER (v3)
+name: Deploy NER
 
 # Déploie le micro-service NER (dossier ner/, FastAPI+GLiNER) sur sa box dédiée
-# memento-ner (51.159.135.119), à chaque push sur memento-v3 touchant ner/**.
+# memento-ner (51.159.135.119), à chaque push sur main touchant ner/**.
 #
 # La clé SSH_DEPLOY_KEY_NER est ÉPINGLÉE en forced-command sur /opt/deploy/memento-ner.sh
 # côté box : le `script:` ci-dessous ne fait que « sonner à la porte », toute la logique
@@ -11,10 +11,10 @@ name: Deploy NER (v3)
 
 on:
   push:
-    branches: [memento-v3]
+    branches: [main]
     paths:
       - "ner/**"
-      - ".github/workflows/deploy-ner-v3.yml"
+      - ".github/workflows/deploy-ner.yml"
   workflow_dispatch:
 
 concurrency:
