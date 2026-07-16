@@ -1,11 +1,14 @@
 name: Tests
 
-# Integration tests of the Edge Functions (deno test) against a real Postgres.
-# v2 and v3 use SEPARATE, COLLIDING mem_* schemas (cf. CLAUDE.md — v2 lineage =
-# server/drizzle via schema.ts ; v3 lineage = supabase/migrations). They cannot share
-# one database, so each runs in its OWN job (hence its own Postgres service):
-#   • v2-integration: drizzle push (schema.ts)            → runs the non-v3 tests.
-#   • v3-integration: applies supabase/migrations/*.sql    → runs the *.v3.test.ts.
+# Tests d'intégration des Edge Functions (deno test) contre un vrai Postgres
+# provisionné avec la lignée de migrations v3 (supabase/migrations). Miroir CI de
+# scripts/test-local.sh (qui, lui, utilise `supabase db reset`).
+#
+# Deux inadéquations image-CI ↔ prod, gérées au provisioning (cf. étape ci-dessous) :
+#   • le schéma `memento_v3` (search_path de prod, db.v3.ts) est référencé par les
+#     migrations mais créé À LA MAIN au cutover → on le crée ici ;
+#   • `pg_cron` (job de purge des rate-limits) est absent de l'image pgvector →
+#     on retire ce bloc (non exercé par les tests).
 
 on:
   push:
@@ -22,54 +25,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  v2-integration:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        # pgvector preinstalled: the embeddings migration runs `CREATE EXTENSION vector`.
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: tuls
-          POSTGRES_PASSWORD: tuls-dev
-          POSTGRES_DB: memento
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DATABASE_URL: postgresql://tuls:tuls-dev@localhost:5432/memento
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 20
-      # Materialize the canonical v2 TS schema (drizzle push from server/src/db.ts →
-      # schema.ts) rather than the SQL migration chain (which carries Supabase-only
-      # steps absent from a CI Postgres). `push` creates all the mem_* v2 tables the
-      # tests need; `--force` = non-interactive.
-      - name: Provision v2 schema (drizzle push)
-        working-directory: server
-        run: |
-          npm ci
-          npx drizzle-kit push --force
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      # Only the non-v3 tests: the *.v3.test.ts need the v3 schema (other job).
-      # auth.users is provisioned by the tests themselves (cf. seedUser).
-      - name: deno test (v2 + hermetic)
-        working-directory: supabase/functions
-        run: |
-          files=$(ls _shared/*.test.ts | grep -v '\.v3\.test\.ts$' || true)
-          echo "v2/hermetic test files:"; echo "$files"
-          deno test --allow-env --allow-net --allow-read $files
-
-  v3-integration:
+  integration:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -90,30 +46,36 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Apply the v3 migration lineage (supabase/migrations) directly with psql — the
-      # same recipe as the disposable pgvector container in CLAUDE.md. The extensions it
-      # uses (pgcrypto/pg_trgm/vector/unaccent) ship with the pgvector image; no pg_cron.
       - name: Provision v3 schema (supabase/migrations + auth.users stub)
         run: |
           command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          # `memento_v3` = le search_path de prod (db.v3.ts). Les migrations le
+          # référencent (rate_limits) mais ne le créent pas (créé à la main au
+          # cutover) → on le crée. Les tables de base restent dans `public` (comme
+          # l'apply brut) ; le search_path des tests (memento_v3,public,extensions)
+          # couvre les deux.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "create schema if not exists memento_v3;"
           for f in supabase/migrations/*.sql; do
             echo "applying $f"
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            # pg_cron absent de l'image pgvector (présent via `supabase db reset`
+            # localement) : on retire le job de purge (dernier bloc de rate_limits,
+            # non exercé par les tests).
+            awk '/CREATE EXTENSION IF NOT EXISTS pg_cron/{exit} {print}' "$f" \
+              | psql "$DATABASE_URL" -v ON_ERROR_STOP=1
           done
           # Supabase fournit `auth.users` en prod ; en CI on pose le même stub minimal
-          # que server/src/seed-auth-local.ts (colonnes lues/écrites par les tests v3).
+          # que server/src/seed-auth-local.ts (colonnes lues/écrites par les tests).
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
             -c "create schema if not exists auth; create table if not exists auth.users (id uuid primary key, email text, last_sign_in_at timestamptz);"
 
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      # Only the *.v3.test.ts (they self-skip without DATABASE_URL; here it is set).
-      # On a ref without any v3 test (e.g. v2-only main), skip cleanly.
-      - name: deno test (v3)
+      # Tous les _shared/*.test.ts (DB-backed). On exclut mcp/*.test.ts : le .d.ts du
+      # SDK MCP est absent du cache Deno (cf. CLAUDE.md) → pas de typecheck local fiable.
+      - name: deno test (_shared, DB-backed)
         working-directory: supabase/functions
         run: |
-          files=$(ls _shared/*.v3.test.ts 2>/dev/null || true)
-          if [ -z "$files" ]; then echo "no v3 tests on this ref — skipping"; exit 0; fi
-          echo "v3 test files:"; echo "$files"
+          files=$(ls _shared/*.test.ts 2>/dev/null || true)
+          echo "test files:"; echo "$files"
           deno test --allow-env --allow-net --allow-read $files
