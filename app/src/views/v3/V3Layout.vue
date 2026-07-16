@@ -15,6 +15,12 @@ const route = useRoute();
 // La vue Pages (arbre + colonnes Miller) est un explorateur → pleine largeur/hauteur.
 // Les vues document (Recherche/Org/Connecteur/Inbox) gardent un cadre centré lisible.
 const isPagesView = computed(() => route.path === "/v3" || route.path.startsWith("/v3/page"));
+// Route de lecture d'une page/entité — accessible par lien public (sans compte /
+// sans base). Le lecteur doit alors se monter MÊME sans base accessible.
+const isDocRoute = computed(() => route.path.startsWith("/v3/page") || route.path.startsWith("/v3/entity"));
+// Chrome cockpit (sélecteur de base, nav, déconnexion) : seulement quand l'appelant
+// a un contexte de base. Un visiteur d'un lien public n'en a pas → vue épurée.
+const cockpit = computed(() => basesLoaded.value && !!currentBase.value);
 const palette = ref<InstanceType<typeof CommandPalette> | null>(null);
 
 onMounted(async () => {
@@ -36,32 +42,36 @@ async function signOut() {
 
 <template>
   <div class="v3">
-    <header class="bar">
+    <header class="bar" :class="{ minimal: !cockpit }">
       <div class="brand">Memento</div>
-      <select class="base-select" :value="currentBase" @change="onBaseChange" :disabled="!basesLoaded">
-        <option v-if="!basesLoaded" value="">Chargement…</option>
-        <option v-for="b in bases" :key="b.id" :value="b.id">{{ b.name }}</option>
-        <option v-if="basesLoaded && !bases.length" value="">Aucune base accessible</option>
-      </select>
-      <nav class="nav">
-        <router-link to="/v3" exact-active-class="on">Pages</router-link>
-        <router-link to="/v3/search" active-class="on">Recherche</router-link>
-        <router-link to="/v3/inbox" active-class="on">Boîte de réception</router-link>
-        <router-link to="/v3/org" active-class="on">Organisation</router-link>
-        <router-link to="/v3/connector" active-class="on">Connecteur</router-link>
-      </nav>
-      <button
-        class="cmdk-hint"
-        title="Palette de commandes (Ctrl/⌘ + K)"
-        aria-label="Ouvrir la palette de commandes"
-        @click="palette?.open()"
-      >
-        <span class="cmdk-k">⌘K</span>
-      </button>
-      <button class="signout" @click="signOut">Déconnexion</button>
+      <template v-if="cockpit">
+        <select class="base-select" :value="currentBase" @change="onBaseChange" :disabled="!basesLoaded">
+          <option v-if="!basesLoaded" value="">Chargement…</option>
+          <option v-for="b in bases" :key="b.id" :value="b.id">{{ b.name }}</option>
+          <option v-if="basesLoaded && !bases.length" value="">Aucune base accessible</option>
+        </select>
+        <nav class="nav">
+          <router-link to="/v3" exact-active-class="on">Pages</router-link>
+          <router-link to="/v3/search" active-class="on">Recherche</router-link>
+          <router-link to="/v3/inbox" active-class="on">Boîte de réception</router-link>
+          <router-link to="/v3/org" active-class="on">Organisation</router-link>
+          <router-link to="/v3/connector" active-class="on">Connecteur</router-link>
+        </nav>
+        <button
+          class="cmdk-hint"
+          title="Palette de commandes (Ctrl/⌘ + K)"
+          aria-label="Ouvrir la palette de commandes"
+          @click="palette?.open()"
+        >
+          <span class="cmdk-k">⌘K</span>
+        </button>
+        <button class="signout" @click="signOut">Déconnexion</button>
+      </template>
     </header>
     <main class="content" :class="{ flush: isPagesView }">
-      <router-view v-if="basesLoaded && currentBase" :key="currentBase" />
+      <!-- Rend le lecteur si l'appelant a une base OU s'il s'agit d'un lien public
+           (page/entité) : la page publique se charge par id, sans base ni compte. -->
+      <router-view v-if="basesLoaded && (currentBase || isDocRoute)" :key="currentBase || 'public'" />
       <p v-else-if="basesLoaded" class="empty">Aucune base de connaissances accessible avec ce compte.</p>
       <p v-else class="empty">Chargement…</p>
     </main>
