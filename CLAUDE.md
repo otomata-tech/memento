@@ -24,13 +24,13 @@ de dire, pas de "voici ce que j'ai fait", pas de tableaux/emojis décoratifs. R�
 
 Pivot majeur (ADR dans `docs/adr/`, suite 0001–0004) : **suppression des blocs et liens typés** → une page = prose pure (titre+description+corps), un arbre ; **entités** = objet de 1er ordre niveau org (NER serveur + logique/décision) ; **1 base/org** ; accès par page ; **8 verbes MCP** (`server/src/mcp-contract.v3.ts`).
 
-**Topologie post-cutover (consolidation in-project, runbook = issue #58, cutover + retrait v2 clos le 2026-07-02)** : v3 vit dans le **schéma PG dédié `memento_v3`** du projet Supabase de mento.cc (auth partagée avec ex-v2, c'était tout l'enjeu). **v2 est RETIRÉ** : schéma `public` droppé, ancien projet blue-green + staging memento-v3.oto.zone supprimés. `public` est désormais **vide** ; les extensions partagées (`vector`/`unaccent`/`pgcrypto` + FTS `french_unaccent`) vivent dans le schéma **`extensions`**. Backup v2 hors-ligne : `~/backups/memento-v2-*` (seul filet, plus de rollback vers v2). Prod = app **me.mento.cc** + connecteur **mcp.mento.cc** (CF Pages `memento-viewer` : SPA + Pages Functions `app/functions/` qui proxifient `/mcp`→`mcp-v3/mcp`, `/api`→`api-v3`).
+**Topologie post-cutover (consolidation in-project, runbook = issue #58 ; v3 promu en `main` le 2026-07-16)** : v3 vit dans le **schéma PG dédié `memento_v3`** du projet Supabase de mento.cc (auth partagée avec ex-v2, c'était tout l'enjeu). **v2 est RETIRÉ** — code viewer + edge supprimés, schéma `public` (tables métier) vidé ; les extensions partagées (`vector`/`unaccent`/`pgcrypto` + FTS `french_unaccent`) vivent dans le schéma **`extensions`**. Prod = app **me.mento.cc** + connecteur **mcp.mento.cc** (CF Pages `memento-viewer` : SPA + Pages Functions `app/functions/` qui proxifient `/mcp`→`functions/v1/mcp/mcp`, `/api`→`functions/v1/api`, `/.well-known`→`functions/v1/mcp`). **Fonctions edge = `mcp` + `api`** (les slugs `-v3` ont été renommés au cutover main ; l'URL publique du connecteur dérive de `MEMENTO_PUBLIC_URL`, pas du slug). **Viewer à la racine, sans `/v3`** : `/pages`, `/page/:id`, `/search`, `/inbox`, `/org`, `/connector`, `/entity/:id` (anciens `/v3/*` → redirections). Une page `public` est **lisible en anonyme** par lien (API GET sans Bearer → `sub=""`, scope public seul).
 
 - ⚠️ **`db.v3.ts`, jamais `db.ts`, dans le graphe v3** : `_shared/db.v3.ts` pose `search_path=memento_v3,public,extensions` (tables v3 dans `memento_v3`, extensions + FTS dans `extensions`, `public` vide). Un module v3 qui importerait `db.ts` (défaut `public`) ne verrait **aucune table**.
-- **Migrations v3 = `supabase/migrations/`**, appliquées **à la main, transformées** vers `memento_v3` (3 règles : prepend `search_path`, functions `SET search_path`, FK `"public"."mem_`→`"memento_v3"."mem_`) — cf. #58. Jamais auto-appliquées. (La lignée v2 `server/drizzle/` + les workflows v2 sur `main` sont **désactivés** post-retrait.)
+- **Migrations v3 = `supabase/migrations/`**, appliquées **à la main, transformées** vers `memento_v3` (3 règles : prepend `search_path`, functions `SET search_path`, FK `"public"."mem_`→`"memento_v3"."mem_`) — cf. #58. Jamais auto-appliquées par la CI. (La lignée v2 `server/drizzle/` reste pour le typecheck/outillage Node ; les workflows de deploy v2 ont été **supprimés** au cutover main.)
 - **Tester un lot v3 DB-backed** : conteneur pgvector jetable + appliquer `supabase/migrations/*.sql` (psql) + `deno test … --config supabase/functions/deno.json` avec `DATABASE_URL` posé. Les modules `*.v3.ts` chargent **sans** `DATABASE_URL` (db lazy `getDb()`) → unit/mock sans DB ; les tests vraiment DB-backed s'auto-skip sinon.
 - **NER** = micro-service Python séparé (GLiNER, 3 types personne/entreprise/outil), `https://memento-ner.oto.zone`, bearer ; appelé **async** par `apply` (non bloquant). **Embeddings** = Mistral `mistral-embed` (1024), env `MEMENTO_MISTRAL_API_KEY`. **Indexation** chunk+embed dans l'apply (`_shared/indexing.v3.ts`).
-- Reliquat (non bloquant) : la prod tourne sur la **branche `memento-v3`** (pas `main`) — modèle de branches à ranger un jour (renommer + refondre les workflows).
+- **`main` = la prod** (v3 promu le 2026-07-16, ex-branche `memento-v3` mergée) : un push sur `main` déploie (deploy-app/functions/ner). Plus de branche v3 séparée.
 - ⚠️ **Repo PUBLIC** : pas de noms clients/personnes dans ADR/tests/exemples (anonymiser).
 
 ## Project context
@@ -86,25 +86,23 @@ Pas de lint serveur. Checks locaux avant push :
 - `cd server && npm run typecheck`
 - `cd app && npm run build` (vue-tsc — seule vérif TS du viewer)
 
-**Un push déclenche des déploiements selon la branche** (tous gated `repository_owner == otomata-tech` → un fork ne déploie pas la prod) :
+**Un push sur `main` déclenche des déploiements selon les paths** (tous gated `repository_owner == otomata-tech` → un fork ne déploie pas la prod) :
 
-| Push sur | Paths | Effet |
+| Paths | Workflow | Effet |
 |---|---|---|
-| `main` | `supabase/functions/**`, `schema.ts`, `drizzle/**` | ~~`db:migrate` v2 + deploy `mcp`/`api`~~ — workflow **DÉSACTIVÉ** (post-retrait v2 : `db:migrate` **recréerait** les tables v2 dans le `public` vide) |
-| `main` | `app/**` | ~~deploy viewer CF Pages~~ — workflow **DÉSACTIVÉ** : il écraserait le front v3 prod (même projet CF Pages) |
-| `main` / PR | `supabase/**`, `server/**` | `test.yml` : deno test sur Postgres pgvector |
-| `memento-v3` | `supabase/functions/**` | deploy `api-v3`+`mcp-v3` → **projet Supabase de PROD** — **AUCUNE migration DB** |
-| `memento-v3` | `app/**` | build (`VITE_MEMENTO_V3=true` obligatoire) + deploy **CF Pages `memento-viewer` = PROD** me.mento.cc/mcp.mento.cc |
-| `memento-v3` | `ner/**` | SSH box NER → redeploy GLiNER |
+| `supabase/functions/**` | `deploy-functions` | deploy `api`+`mcp` → **projet Supabase de PROD** — **AUCUNE migration DB** |
+| `app/**` | `deploy-app` | build + deploy **CF Pages `memento-viewer` = PROD** me.mento.cc/mcp.mento.cc |
+| `ner/**` | `deploy-ner` | SSH box NER → redeploy GLiNER |
+| `supabase/**`, `server/**` (push `main` + PR) | `test` | deno test `_shared/*.test.ts` sur Postgres pgvector (provisionne `memento_v3`, strippe pg_cron) |
 
-⚠️ **Un push `memento-v3` déploie LA PROD** (plus de staging depuis le cutover #58).
-Les migrations v3 (`supabase/migrations/`) ne sont **jamais** auto-appliquées — manuel,
-transformées vers `memento_v3` (cf. § V3).
+⚠️ **Un push `main` déploie LA PROD** (plus de staging ni de branche v3 séparée depuis
+le cutover main du 2026-07-16). Les migrations v3 (`supabase/migrations/`) ne sont **jamais**
+auto-appliquées — manuel, transformées vers `memento_v3` (cf. § V3).
 
 **Gate local en une commande** — `bash scripts/test-local.sh` rejoue tout le filet avant un push
-(DB locale migrée v3 → `deno test _shared/` DB-backed → typecheck server → build app).
-Indispensable pour un push **direct** sur `memento-v3` (aucun test côté CI). Prérequis one-shot
-(Docker lancé + Deno + Supabase CLI dans le PATH) : installeurs par OS en tête du script.
+(DB locale migrée v3 via `supabase db reset` → `deno test _shared/` DB-backed → typecheck server →
+build app). Prérequis one-shot (Docker lancé + Deno + Supabase CLI dans le PATH) : installeurs par
+OS en tête du script.
 
 ## Conventions
 
@@ -115,7 +113,6 @@ Indispensable pour un push **direct** sur `memento-v3` (aucun test côté CI). P
 - `deno check` can't fully type-check `mcp/index.ts` locally (the MCP SDK's `.d.ts` is missing from Deno's cache) — check `_shared`/`api` locally, and rely on the deploy step's bundle type-check for `mcp`.
 - **Write verbs are op-based**, one verb per domain dispatched by an `op` enum: content via `mem_stage_changes` (ops in `_shared/ingestion.ts`); structure via `mem_section_op`/`mem_move`/`mem_document_op` (+ `mem_reorder`); governance via `mem_workspace_admin`/`mem_grants`/`mem_org`. Adding a write capability = **a new `op` branch** (validate fields in-handler → explicit error; keep autz per-branch, never centralized), **not a new top-level tool** — the surface stays small so weak LLMs don't misfire (the whole point). Each verb is a thin shell over the unchanged `_shared/*` function; the REST mirror (`api/index.ts`) is a separate projection, untouched by MCP-surface changes. Make `op` optional with a sane default where it preserves back-compat for a client still on the old schema.
 - **`INSTRUCTIONS` (the server preamble) is a backtick template literal** — NEVER put backticks in its body (e.g. around field names like docId): they close the template and break the bundle parse at deploy (no local catch — see the `deno check` note above). It is also served verbatim to every client → keep it **client-agnostic** (no "claude.ai"/"Claude"; say "the assistant"). The per-tool `description` strings are normal `"..."` strings — backticks are fine there.
-- **Viewer layout**: `AppShell` (`.ed`) is `height:100%; overflow:hidden` — a page's scrollable body MUST be wrapped in `<div class="scroll">` (`.ed .scroll` = flex:1/min-height:0/overflow-y:auto), otherwise tall content is clipped with no scrollbar. Card/chrome styles live **globally** in `app/src/assets/editorial.css` under `.ed *` (views mostly carry no scoped styles) → a component extracted from a view inherits them as long as it renders inside `AppShell` (e.g. `IngestionReview`, the propose-validate review card shared by `LoopView` + `InboxView`).
 - **Operational ids go in `payload`, never the descriptive `target` label** (the #1 staging footgun) — `add_document`→`payload.sectionId`, `add_block`→`documentId`, block ops→`id`, etc. (`TARGET` map in `_shared/ingestion.ts`). `add_document` also accepts a readable `payload.sectionPath`, resolved to `sectionId` at stage **and** apply (`resolvePathTargets` → `resolveSectionIdInWorkspace`, workspace-scoped).
 
 ## Edge Function secrets
@@ -132,5 +129,6 @@ Set as platform secrets (never committed — repo is public; read via `Deno.env.
 - `specs/knowledge-base.md` — spec fondatrice (modèle + surface MCP).
 - `access-control.md` — modèle d'accès (visibilités par page, grants, héritage).
 - `connect-mcp.md` — brancher le connecteur MCP (OAuth, clients).
-- `deploy.md` — déployer la PROD (push `memento-v3`, garde-fous post-cutover).
+- `deploy.md` — déployer la PROD (push `main`, garde-fous migrations).
+- `deployment-edge.md` — topologie edge (CF Pages Functions ↔ Supabase functions, domaines, proxy).
 - `adr/` — décisions d'architecture (0001–0004).
