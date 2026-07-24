@@ -30,7 +30,7 @@ jobs:
         # Pin par SHA (un tag re-poussé = exécution arbitraire avec accès au secret).
         uses: appleboy/ssh-action@2ead5e36573f08b82fbfce1504f1a4b05a647c6f # v1.2.2
         with:
-          host: 51.159.135.119 # memento-ner (PLAY2-NANO, fr-par-2)
+          host: 51.159.139.32 # fod-0 (DEV1-L, fr-par-2) — NER mergé depuis la box memento-ner le 2026-07-24
           username: root
           key: ${{ secrets.SSH_DEPLOY_KEY_NER }}
           script: deploy memento-ner # ignoré — la clé force /opt/deploy/memento-ner.sh
